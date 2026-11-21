@@ -1,10 +1,11 @@
 """Exercise Sparkle against disposable app bundles, separate preference domains and channels."""
-import os
+import http.server
 import pathlib
 import plistlib
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 
@@ -20,6 +21,51 @@ def wait_for(log, needle, count=1, seconds=55):
         if sum(needle in line for line in s.splitlines()) >= count: return s
         time.sleep(.15)
     raise RuntimeError(f"timed out waiting for {needle!r} in {log}\n" + s[-1200:])
+
+def check_during_background(home, source_app, appcast):
+    home.mkdir()
+    release_response = threading.Event()
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            (home/"request-started").touch()
+            if not release_response.wait(timeout=20):
+                self.send_error(503)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/xml")
+            self.send_header("Content-Length", str(len(appcast)))
+            self.end_headers()
+            self.wfile.write(appcast)
+        def log_message(self, *args):
+            pass
+    with http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        app = home/source_app.name
+        run("ditto", source_app, app)
+        plist = app/"Contents/Info.plist"
+        info = plistlib.loads(plist.read_bytes())
+        ident = "io.github.digidai.samare.update-test." + uuid.uuid4().hex
+        info.update(CFBundleIdentifier=ident, SUFeedURL=f"http://127.0.0.1:{server.server_port}/appcast.xml")
+        plist.write_bytes(plistlib.dumps(info))
+        run("/usr/bin/codesign", "-f", "-s", "-", app)
+        process = subprocess.Popen([app/"Contents/MacOS/Samare", "--check-during-background"])
+        try:
+            events = home/"events"
+            progress = wait_for(events, "Checking for updates", seconds=12)
+            assert "user checked during background request" in progress, progress
+            release_response.set()
+            result = wait_for(events, "up to date")
+            process.wait(timeout=10)
+            assert result.count("user checked during background request") == result.count("up to date") == 1, result
+            print("One manual check during an active background request showed immediate progress and a final result.", flush=True)
+        finally:
+            release_response.set()
+            server.shutdown()
+            if process.poll() is None: process.terminate()
+            process.wait(timeout=10)
+            subprocess.run(["defaults", "delete", ident], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 with tempfile.TemporaryDirectory(prefix="update-qa-", dir=root/"build") as tmp:
     test = pathlib.Path(tmp)
     key = test/"test-key"
@@ -50,6 +96,8 @@ with tempfile.TemporaryDirectory(prefix="update-qa-", dir=root/"build") as tmp:
         (dest/"Contents/Info.plist").write_bytes(plistlib.dumps(info))
         run("/usr/bin/codesign", "-f", "-s", "-", dest)
         run(root/"Updates/package-release.py","--app",dest,"--channel",channel,"--key",key)
+        if not damaged:
+            check_during_background(test/"background", dest, (channel/"appcast.xml").read_bytes())
         if damaged:
             archive=next(channel.glob("Samare-2-*.zip"))
             with archive.open("r+b") as stream:

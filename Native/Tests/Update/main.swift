@@ -30,7 +30,14 @@ final class Runner: NSObject, NSApplicationDelegate {
       }
     }
     updates.start(localDirectory: marker.appendingPathComponent("channel"))
-    if build == 2 {
+    if CommandLine.arguments.contains("--check-during-background") {
+      Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { timer in
+        guard FileManager.default.fileExists(atPath: marker.appendingPathComponent("request-started").path) else { return }
+        timer.invalidate()
+        record("user checked during background request")
+        self.updates.check(interactive: true)
+      }
+    } else if build == 2 {
       DispatchQueue.main.asyncAfter(deadline: .now()+1) { self.updates.check(interactive: true) }
     }
   }

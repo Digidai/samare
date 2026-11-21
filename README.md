@@ -6,7 +6,7 @@ Samare is a local Markdown editor for macOS. Open a folder on your Mac, write in
 
 ## Install on Apple Silicon
 
-Download **Samare-0.1.0-arm64.dmg** from [GitHub Releases](https://github.com/Digidai/samare/releases/latest), open the disk image and drag Samare into Applications. The download uses ad-hoc signing and has no Apple notarization. If Gatekeeper blocks it, you can build Samare from source using the instructions below. Intel users can build on an Intel Mac.
+Download the **arm64.dmg** disk image from [GitHub Releases](https://github.com/Digidai/samare/releases/latest), open the disk image and drag Samare into Applications. The download uses ad-hoc signing and has no Apple notarization. If Gatekeeper blocks it, you can build Samare from source using the instructions below. Intel users can build on an Intel Mac.
 
 The release build checks for signed updates on GitHub. Builds you make yourself only check a feed when you configure one.
 

@@ -47,7 +47,7 @@
   let roots = [],
     workspace = '',
     creationFolder = '',
-    releaseVersion = '0.1.0',
+    releaseVersion = '0.1.1',
     pendingRelease = false,
     home = true,
     tabs = [],
@@ -2037,11 +2037,17 @@
         title.id = 'release-title';
         const close = button('Close', 'x', closeDialog, 'ico release-close');
         b.append(close, el('p', 'release-version', 'Version ' + releaseVersion), title);
-        const highlights = releaseVersion === '0.1.0' ? [
-          ['Long notes', 'Start reading and editing while the remaining sections load.'],
-          ['Quick Look', 'Preview diagrams directly in Finder.'],
-          ['Changes from disk', 'Review individual edits and put them back from a browser.'],
-        ] : [];
+        const notes = {
+          '0.1.1': [
+            ['Checking for updates', 'The menu now shows a result even when Samare is already checking in the background.'],
+          ],
+          '0.1.0': [
+            ['Long notes', 'Start reading and editing while the remaining sections load.'],
+            ['Quick Look', 'Preview diagrams directly in Finder.'],
+            ['Changes from disk', 'Review individual edits and put them back from a browser.'],
+          ],
+        };
+        const highlights = notes[releaseVersion] || [];
         for (const [name, detail] of highlights) b.append(el('h3', '', name), el('p', 'quiet', detail));
         const changelog = button('Samare release notes', null, () => host('openExternal', {
           url: 'https://github.com/Digidai/samare/releases',

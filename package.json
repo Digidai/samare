@@ -1,6 +1,6 @@
 {
   "name": "samare",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Build tools for Samare’s offline document renderer",
   "scripts": {

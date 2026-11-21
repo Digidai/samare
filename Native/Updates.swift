@@ -48,6 +48,7 @@ final class SamareUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
   private var retryTermination: (() -> Void)?
   private var wasInteractive = false
   private var pendingCheck = false
+  private var availabilityObservation: NSKeyValueObservation?
 
   private var hasSigningKey: Bool {
     Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") as? String != nil
@@ -86,6 +87,7 @@ final class SamareUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
   }
 
   func stop() {
+    availabilityObservation = nil
     channelInput?.fileHandleForWriting.closeFile()
     channelInput = nil
     channel = nil
@@ -96,8 +98,14 @@ final class SamareUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
     do {
       try controller.start()
       updater = controller
+      availabilityObservation = controller.observe(\.canCheckForUpdates, options: [.new]) { [weak self] _, change in
+        guard change.newValue == true else { return }
+        DispatchQueue.main.async { [weak self] in
+          guard let self, self.pendingCheck else { return }
+          self.check(interactive: true)
+        }
+      }
       check(interactive: pendingCheck)
-      pendingCheck = false
     } catch { stop(); report("error", error.localizedDescription) }
   }
   func feedURLString(for updater: SPUUpdater) -> String? { feed?.absoluteString }
@@ -106,16 +114,25 @@ final class SamareUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
       if interactive { report("idle", "This build has no update feed configured.") }
       return
     }
-    guard let updater else {
-      if interactive { pendingCheck = true; if channel == nil { start() } }
-      return
-    }
-    if !interactive, Date().timeIntervalSince(lastCheck) < 1800 { return }
     if choice != nil {
       if interactive { report("available", "An update is available.") }
       return
     }
+    if interactive {
+      if let phase = state["phase"] as? String, ["installing", "retryQuit"].contains(phase) {
+        publish?(state)
+        return
+      }
+      if state["phase"] as? String == "checking", !pendingCheck { return }
+      pendingCheck = true
+      if state["phase"] as? String != "checking" { report("checking", "Checking for updates…") }
+    } else if Date().timeIntervalSince(lastCheck) < 1800 || pendingCheck { return }
+    guard let updater else {
+      if interactive, channel == nil { start() }
+      return
+    }
     guard updater.canCheckForUpdates else { return }
+    pendingCheck = false
     wasInteractive = interactive
     lastCheck = Date()
     if interactive { updater.checkForUpdates() } else { updater.checkForUpdatesInBackground() }
@@ -136,12 +153,16 @@ final class SamareUpdates: NSObject, SPUUserDriver, SPUUpdaterDelegate {
   func show(_ request: SPUUpdatePermissionRequest, reply: @escaping (SUUpdatePermissionResponse) -> Void) {
     reply(SUUpdatePermissionResponse(automaticUpdateChecks: true, sendSystemProfile: false))
   }
-  func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) { report("checking", "Checking for updates…") }
+  func showUserInitiatedUpdateCheck(cancellation: @escaping () -> Void) {
+    if state["phase"] as? String != "checking" { report("checking", "Checking for updates…") }
+  }
   func showUpdateFound(with appcastItem: SUAppcastItem, state: SPUUserUpdateState,
                        reply: @escaping (SPUUserUpdateChoice) -> Void) {
     version = appcastItem.displayVersionString
     choice = reply
-    report("available", state.userInitiated ? "An update is available." : "")
+    let notify = state.userInitiated || pendingCheck
+    pendingCheck = false
+    report("available", notify ? "An update is available." : "")
   }
   func showUpdateReleaseNotes(with downloadData: SPUDownloadData) {}
   func showUpdateReleaseNotesFailedToDownloadWithError(_ error: Error) {}
