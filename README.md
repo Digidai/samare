@@ -4,11 +4,11 @@ Samare is a local Markdown editor for macOS. Open a folder on your Mac, write in
 
 ![Samare with the sample folder open on macOS](docs/workspace.png)
 
-## Install on Apple Silicon
+## Install on macOS
 
-Download the **arm64.dmg** disk image from [GitHub Releases](https://github.com/Digidai/samare/releases/latest), open the disk image and drag Samare into Applications. The download uses ad-hoc signing and has no Apple notarization. If Gatekeeper blocks it, you can build Samare from source using the instructions below. Intel users can build on an Intel Mac.
+In **Apple menu → About This Mac**, look for the chip or processor. Choose **arm64.dmg** for an Apple M-series chip or **x86_64.dmg** for an Intel processor from [GitHub Releases](https://github.com/Digidai/samare/releases/latest). Open the disk image and drag Samare into Applications. Both 0.1.1 downloads use ad-hoc signing and have no Apple notarization. If Gatekeeper blocks the download, you can build Samare from source using the instructions below.
 
-The release build checks for signed updates on GitHub. Builds you make yourself only check a feed when you configure one.
+Each release build checks a separate signed update feed for its processor. The Apple Silicon release lists its checksums in `SHA256SUMS` and the Intel release in `SHA256SUMS-intel`. Builds you make yourself only check a feed when you configure one.
 
 ## Build and open
 
@@ -22,6 +22,8 @@ open build/Samare.app
 ```
 
 The browser assets ship in the source tree, so a normal app build needs neither npm nor an installed copy of another editor. Local builds use ad-hoc code signing. To make a drag-to-Applications disk image, run `Updates/package-dmg.sh`. The disk image appears in `build/Samare.dmg`.
+
+To build the Intel app on an Apple Silicon Mac with Rosetta installed, run `SAMARE_BUILD_ARCH=x86_64 ./build.sh build/intel/Samare.app`. The Intel release test mounts the disk image, checks every executable, launches the app and reads text from a rendered Markdown document.
 
 ## Try it with your own files
 
@@ -70,6 +72,18 @@ python3 Updates/package-release.py --key /path/outside/the/repository/ed25519 --
 ```
 
 Host the generated appcast and archive together. If your feed redirects or the archive lives elsewhere, pass `--archive-base-url` with the public HTTPS directory containing the archive. Keep the private key with the publisher. Apple Developer ID signing and notarization are separate from Sparkle’s update signatures.
+
+For releases with separate processor builds, give the Intel binary a feed URL ending in `/appcast-intel.xml` and Apple Silicon a URL ending in `/appcast.xml`. Package each build into its own channel directory. Publish the two feeds and their corresponding archives with each release.
+
+### Apple notarization for maintainers
+
+Inspect the built app with `Updates/notarize-release.py --check --app build/Samare.app`. Submission requires a **Developer ID Application** certificate with its private key in the signing keychain, and an authenticated `notarytool` keychain profile. Run the following for each architecture, using a new output directory each time.
+
+```sh
+Updates/notarize-release.py --submit --app build/Samare.app --profile YOUR_PROFILE --output build/notarized-arm64
+```
+
+The tool signs the nested components, submits the app and disk image to Apple, staples the accepted tickets and checks Gatekeeper. Keep the Apple submission receipts. To distribute a notarized version through Sparkle, pass the stapled `Samare.app` from the output directory to `Updates/package-release.py --app`.
 
 ## 中文简介
 
