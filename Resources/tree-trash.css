@@ -1,0 +1,82 @@
+.file-row[data-selected='true'] {
+  background-color: var(--hover);
+}
+#menu.tree-context {
+  min-width: 180px;
+}
+#menu.tree-context button {
+  height: auto;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 6px 12px;
+}
+#menu.tree-context hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  height: 0;
+  margin: 4px 0;
+}
+#side-body {
+  flex: 1 1 auto;
+}
+#tree-trash-toast {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 12px 12px;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--popup);
+  box-shadow: 0 1px 2px var(--shadow-ink);
+  color: var(--muted);
+  font-size: 13px;
+  transition:
+    opacity 0.15s ease-out,
+    transform 0.15s ease-out;
+}
+#tree-trash-toast[hidden] {
+  display: none;
+}
+#tree-trash-toast[data-state='closing'] {
+  opacity: 0;
+  transform: translateY(4px);
+  transition-duration: 0.1s;
+}
+#tree-trash-toast .trash-label {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: baseline;
+  white-space: pre;
+}
+#tree-trash-toast strong {
+  color: var(--fg);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#tree-trash-toast button {
+  flex: none;
+  height: 20px;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+#tree-trash-toast button:hover {
+  background-color: var(--selected);
+}
+@media (prefers-reduced-motion: reduce) {
+  #tree-trash-toast,
+  #tree-trash-toast[data-state='closing'] {
+    transition-property: opacity;
+    transform: none;
+  }
+}

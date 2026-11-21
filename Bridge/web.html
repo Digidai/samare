@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Samare</title>
+<link rel="icon" type="image/svg+xml" href="/samare-mark.svg">
+<link rel="stylesheet" href="/typefaces.css">
+<link rel="stylesheet" href="/vendor/katex.min.css">
+<link rel="stylesheet" href="/editor.css">
+<link rel="stylesheet" href="/bridge.css">
+<link rel="stylesheet" href="/review.css">
+<script defer src="/vendor/editor-libs.js"></script>
+<script defer src="/diagram.js"></script>
+<script defer src="/icons.js"></script>
+<script defer src="/editor.js"></script>
+<script defer src="/lib/diff.min.js"></script>
+<script defer src="/merge.js"></script>
+<script defer src="/review.js"></script>
+<script defer src="/bridge.js"></script>
+</head>
+<body>
+<header><nav id="doc-history" aria-label="Document history"><button id="doc-back" aria-label="Go to previous document" title="Back" disabled></button><button id="doc-forward" aria-label="Go to next document" title="Forward" disabled></button></nav><span class="wordmark"><i aria-hidden="true"></i>Samare</span><div class="file-info"><span class="filename"></span><button id="breadcrumb" disabled></button></div><span class="status" role="status">Opening…</span><button id="mode" title="Show source" aria-label="Show source">&lt;/&gt;</button><div class="browser-actions">
+  <button id="open" aria-label="Open in Samare"></button>
+  <button id="copy" title="Copy file path" aria-label="Copy file path" disabled>⧉</button>
+  <button id="theme" title="Change appearance" aria-label="Change appearance">◐</button>
+</div></header>
+<aside id="notice" role="status" hidden><span id="notice-text"></span><button id="retry" hidden>Try again</button><button id="dismiss" aria-label="Dismiss" title="Dismiss">×</button></aside>
+<div id="merge-controls"></div>
+<main id="document" aria-label="Document"></main>
+<div id="word-count" hidden></div>
+<div id="inspector" hidden>
+  <button id="inspector-edge" aria-label="Open document inspector" aria-expanded="false" aria-controls="inspector-panel"></button>
+  <aside id="inspector-panel" aria-label="Document inspector" hidden>
+    <div class="inspector-heading"><strong id="inspector-title"></strong><button id="inspector-close" aria-label="Close document inspector">×</button></div>
+    <div id="inspector-metrics"></div><h3><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M3 4v10q0 2 2 2h2M3 10h4m3-6h7m-7 6h7m-7 6h7"/></svg>Outline</h3><div id="outline"></div>
+  </aside>
+</div>
+<search id="find" aria-label="Document search" hidden>
+  <span class="find-icon" aria-hidden="true"></span><input aria-label="Find in document" placeholder="Find in document" autocomplete="off" spellcheck="false">
+  <output></output><button id="find-case" aria-label="Match case" title="Match case" aria-pressed="false">Aa</button><i aria-hidden="true"></i>
+  <button id="find-prev" aria-label="Previous match" title="Previous match (⇧↵)"></button><button id="find-next" aria-label="Next match" title="Next match (↵)"></button><button id="find-close" aria-label="Close find bar" title="Close (Esc)">×</button>
+</search>
+</body>
+</html>

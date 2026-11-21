@@ -1,0 +1,10 @@
+{
+  "name": "samare-ui-icons",
+  "private": true,
+  "scripts": {
+    "generate": "node generate.mjs"
+  },
+  "devDependencies": {
+    "lucide-static": "0.468.0"
+  }
+}

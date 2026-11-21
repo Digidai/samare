@@ -1,0 +1,78 @@
+const {chromium} = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const assert = require('node:assert/strict');
+const {pathToFileURL} = require('node:url');
+const path = require('node:path');
+
+(async () => {
+  const browser = await chromium.launch({executablePath:process.env.CHROME_PATH || undefined});
+  try {
+    const page = await browser.newPage({viewport:{width:1250,height:850}});
+    const errors = [];
+    page.on('pageerror', e => errors.push(e.message));
+    await page.addInitScript(() => {
+      window.messages = [];
+      window.webkit = {messageHandlers:{host:{postMessage(m) { messages.push(m); }}}};
+    });
+    await page.goto(pathToFileURL(path.resolve(__dirname,'../Resources/index.html')).href);
+    const workspaces = Array.from({length:6}, (_,i) => ({name:'Group '+i,path:'/test/Group '+i}));
+    const recents = Array.from({length:5}, (_,i) => '/loose/Note '+i+'.md');
+    const boot = {version:'0.1.0',workspaces,files:[],settings:{recents,theme:'light'}};
+    await page.evaluate(p => hostEvent('bootstrap',p),boot);
+    const groups = page.locator('.workspace-picker .home-group');
+    assert.equal(await groups.nth(0).locator('.home-entry').count(),4);
+    assert.equal(await groups.nth(1).locator('.home-entry').count(),3);
+    await groups.nth(0).getByRole('button',{name:'Show all'}).click();
+    assert.equal(await groups.nth(0).locator('.home-entry').count(),6);
+    await groups.nth(1).getByRole('button',{name:'Show all'}).click();
+    assert.equal(await groups.nth(1).locator('.home-entry').count(),5);
+    await groups.nth(1).getByRole('button',{name:'Show fewer'}).click();
+    assert.equal(await groups.nth(1).locator('.home-entry').count(),3);
+    const ws=workspaces[0].path, sub=ws+'/Sub';
+    await page.evaluate(({ws,sub}) => {
+      hostEvent('activeWorkspace',{path:ws});
+      hostEvent('listing',{path:ws,entries:[{path:sub,name:'Sub',isDirectory:true}]});
+    },{ws,sub});
+    await page.locator('[data-tree-path]').filter({hasText:'Sub'}).first().click();
+    await page.keyboard.press('Meta+n');
+    assert.deepEqual(await page.evaluate(() => messages.filter(m=>m.type==='newFile').at(-1)),{type:'newFile',parent:sub});
+    await page.getByRole('button',{name:'New file in Sub',exact:true}).click();
+    await page.getByRole('menuitem',{name:'New file',exact:true}).click();
+    assert.equal(await page.evaluate(() => messages.filter(m=>m.type==='newFile').length),2);
+    assert.deepEqual(await page.evaluate(() => messages.filter(m=>m.type==='newFile').at(-1)),{type:'newFile',parent:sub});
+    await page.keyboard.press('Meta+k');
+    const commandList=page.getByRole('dialog',{name:'Command palette'});
+    await commandList.getByRole('textbox').fill('New File');
+    assert.equal(await commandList.getByRole('option',{name:/^New File(?:$|\s)/i}).count(),0);
+    await page.keyboard.press('Escape');
+    await page.evaluate(p => hostEvent('bootstrap',{...p,showRelease:true}),boot);
+    await page.getByRole('heading',{name:'What’s new in Samare'}).waitFor();
+    assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='releasePresented').length),1);
+    await page.keyboard.press('Escape');
+    await page.evaluate(()=>hostEvent('command','whatsNew'));
+    await page.getByRole('heading',{name:'What’s new in Samare'}).waitFor();
+    await page.getByRole('button',{name:'Close',exact:true}).click();
+    assert.equal(await page.evaluate(()=>messages.filter(m=>m.type==='releasePresented').length),1);
+    await page.evaluate(()=>hostEvent('updateState',{phase:'available',version:'0.3.0'}));
+    const badge=page.locator('#update-pill');
+    await badge.click();
+    assert.ok(await page.evaluate(()=>messages.some(m=>m.type==='installUpdate')));
+    await page.evaluate(()=>hostEvent('updateState',{phase:'installing',version:'0.3.0',percent:57}));
+    assert.equal(await badge.textContent(),'57%');
+    assert.ok(await badge.isDisabled());
+    await page.evaluate(()=>hostEvent('updateState',{phase:'error',message:'Download failed'}));
+    assert.equal(await badge.textContent(),'Retry');
+    await badge.click();
+    await page.evaluate(()=>hostEvent('updateState',{phase:'idle',message:'Samare is up to date.'}));
+    assert.ok(await badge.isHidden());
+    assert.equal(await page.locator('#toast').textContent(),'Samare is up to date.');
+    await page.evaluate(() => hostEvent('bridgeStatus',{enabled:true,commandInstalled:false,running:true}));
+    assert.equal(await page.locator('#side-agent strong').innerText(),'Repair setup');
+    await page.locator('#side-agent').click();
+    assert.ok(await page.getByRole('dialog').isVisible());
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => hostEvent('bridgeStatus',{enabled:true,commandInstalled:true,running:true}));
+    assert.ok(await page.locator('#side-agent').isHidden());
+    assert.deepEqual(errors,[]);
+    console.log('Passed home 4/3 recent limits and independent expansion, subfolder ⌘N, one-time release acknowledgment, reopen, update badge, percentage, retry and manual up-to-date state.');
+  } finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1});

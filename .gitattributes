@@ -1,0 +1,2 @@
+# Keep upstream license text byte-identical to the pinned distribution.
+Resources/vendor/licenses/mermaid-bundled.txt -text

@@ -1,0 +1,79 @@
+Samare — third-party software and typefaces
+
+The project LICENSE covers Samare's own code. Upstream libraries, fonts,
+and drawings retain their respective notices and licenses. Paths below are
+relative to this source tree. The app bundles these resources under
+Contents/Resources, with the same subdirectory names.
+
+Offline document renderer
+
+Resources/vendor/versions.json lists versions of the editor libraries. The
+npm tarball URLs and integrity digests are in package-lock.json. The entry
+point for the editor bundle is tooling/vendor/editor-entry.mjs. To reproduce
+the browser assets with Node.js 22 and npm, run from the repository root:
+
+    npm ci
+    npm run vendor
+
+These commands build the editor, assemble the Prism grammars and copy the
+published diagram, YAML, diff, and font assets. Resources/vendor/sha256.json
+records hashes of generated browser assets. Prebuilt copies allow a normal
+macOS build without Node.js.
+
+• ProseMirror model, state, transform, view, commands, keymap, input rules,
+  history, list schema and tables, orderedmap, rope-sequence and w3c-keyname
+  use the MIT license. Each package has its own copyright notice under
+  Resources/vendor/licenses. https://prosemirror.net/
+• Marked uses the MIT license and includes the upstream Markdown notice.
+  marked-cjk-friendly and js-yaml use MIT. See marked.txt,
+  marked-cjk-friendly.txt and js-yaml.txt in Resources/vendor/licenses.
+  https://github.com/markedjs/marked
+• KaTeX's JavaScript and CSS use MIT. Its math fonts use the SIL Open Font
+  License 1.1 with reserved font names. See Resources/vendor/licenses/katex.txt
+  and katex-fonts.txt. The latter collects the terms encoded by the upstream
+  fonts and includes the full OFL. https://github.com/KaTeX/KaTeX
+• PrismJS uses MIT. Highlight.js and jsdiff use BSD-3-Clause.
+  See Resources/vendor/licenses/prismjs.txt, highlight.js.txt and
+  Resources/lib/diff-LICENSE. https://prismjs.com/
+• Pele uses MIT and includes Lucide notices in its distributed license.
+  See Resources/vendor/licenses/pele.txt. https://github.com/obsidianmd/pele
+• Mermaid uses MIT and includes independently licensed components. The full
+  notices, source archive URLs and copyright holders for its embedded
+  dependencies are in Resources/vendor/licenses/mermaid-bundled.txt.
+  tooling/vendor/mermaid-notice-sources.json pins the upstream npm archives,
+  including multiple versions where the shipped sourcemap contains them.
+  To regenerate the notices from upstream, run
+  python3 tooling/vendor/mermaid-notices.py after npm ci.
+  https://github.com/mermaid-js/mermaid
+• Geist and Geist Mono use the SIL Open Font License 1.1. The packaged
+  Latin, extended Latin and Cyrillic subsets come from Fontsource. Copyright
+  records and the full OFL are in Resources/fonts/Geist-LICENSE and
+  Resources/fonts/GeistMono-LICENSE. https://github.com/vercel/geist-font
+• Lucide 0.468.0 supplies the interface glyphs. The upstream ISC and MIT
+  notices are in Resources/lib/lucide-LICENSE. The icon toolchain has its
+  own npm lock under tools/icons/. https://github.com/lucide-icons/lucide
+• esbuild generates the browser bundle (MIT). See
+  Resources/vendor/licenses/esbuild.txt. Playwright is a test dependency
+  (Apache-2.0); the macOS app ships without its browsers or Node.js.
+  https://github.com/evanw/esbuild
+  https://github.com/microsoft/playwright
+
+Native updates and local services
+
+• Sparkle 2.9.6 and its bundled components retain their upstream notices.
+  The build verifies the release archive identified in Updates/dependency.sh
+  and copies its complete LICENSE into Contents/Resources/Updates/Sparkle-LICENSE.
+  Source: https://github.com/sparkle-project/Sparkle/tree/2.9.6
+• The local services run on CPython 3.13.18 from python-build-standalone
+  release 20261110. Updates/python-runtime.sh pins the archive for each
+  supported architecture and the notices archive. The app bundles the
+  CPython history and terms, PSF license and dependency notices in
+  Contents/Resources/Runtime/licenses/. The dependency catalog gives source
+  URLs and build-level hashes for the upstream C libraries.
+  https://github.com/python/cpython/tree/v3.13.18
+  https://github.com/astral-sh/python-build-standalone/tree/20261110
+  https://github.com/astral-sh/python-build-standalone/blob/20261110/pythonbuild/downloads.py
+
+The app uses the macOS SDK and system frameworks on the user's Mac.
+Product or service names in integration settings identify their owners'
+products. These notices do not grant trademark rights.

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https: http: samareasset:; font-src 'self' data:; connect-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+    />
+    <title>Samare</title>
+    <link rel="stylesheet" href="vendor/katex.min.css" />
+    <link rel="stylesheet" href="typefaces.css" />
+    <link rel="stylesheet" href="shell.css" />
+    <link rel="stylesheet" href="tree-trash.css" />
+    <link rel="stylesheet" href="editor.css" />
+    <link rel="stylesheet" href="review.css" />
+    <style>
+      #finder-drop { position:fixed; inset:4px; z-index:1100; pointer-events:none; border:1px solid var(--accent); border-radius:10px }
+      #finder-drop[hidden] { display:none }
+      #finder-drop[data-allowed="false"] { border-color:var(--line,#ccc) }
+      #finder-drop span { position:absolute; top:48px; left:50%; transform:translateX(-50%); max-width:calc(100% - 56px); overflow:hidden; white-space:nowrap; text-overflow:ellipsis; padding:4px 12px; border:1px solid var(--line); border-radius:8px; color:var(--muted); background:var(--popup); box-shadow:0 4px 16px var(--shadow-ink); font:500 13px/1.3 var(--samare-font-sans) }
+    </style>
+  </head>
+  <body>
+    <header id="bar">
+      <button
+        data-cmd="sidebar"
+        class="ico"
+        id="side-toggle"
+        aria-label="Collapse sidebar"
+      ></button>
+      <div id="drag" aria-hidden="true"></div>
+      <span id="focus-document"></span>
+      <button type="button" id="update-pill" hidden></button>
+      <div class="tools" id="tools"></div>
+    </header>
+    <div id="layout">
+      <aside id="sidebar">
+        <div class="brand"><i aria-hidden="true"></i>Samare</div>
+        <div id="side-body"></div>
+        <button id="side-agent" type="button" hidden><strong></strong><span></span></button>
+        <div id="tree-trash-toast" role="status" aria-live="polite" hidden>
+          <span class="trash-label"><span>Moved </span><strong></strong><span> to Trash</span></span>
+          <button type="button">Undo</button>
+        </div>
+      </aside>
+      <div id="divider" role="separator" aria-label="Resize sidebar"></div>
+      <main id="surface">
+        <div id="tabs" role="tablist" aria-label="Open files"></div>
+        <div id="stage">
+          <button id="rail" aria-label="Open document inspector"></button>
+          <div id="inspector" hidden></div>
+          <section id="scroll">
+            <div id="column">
+              <div id="editor"></div>
+              <div id="backlinks"></div>
+            </div>
+          </section>
+          <div id="counter" role="group" hidden></div>
+          <div id="notice" hidden></div>
+          <div id="merge-controls"></div>
+          <div id="findbar" hidden></div>
+        </div>
+        <div id="reading-progress" aria-hidden="true"><i></i></div>
+      </main>
+    </div>
+    <div id="overlay" hidden></div>
+    <div id="menu" role="menu" hidden></div>
+    <div id="toast" role="status" hidden></div>
+    <div id="finder-drop" hidden><span role="status"></span></div>
+    <script src="icons.js"></script>
+    <script src="lib/diff.min.js"></script>
+    <script src="merge.js"></script>
+    <script src="review.js"></script>
+    <script src="vendor/editor-libs.js"></script>
+    <script src="diagram.js"></script>
+    <script src="editor.js"></script>
+    <script src="agent-settings.js"></script>
+    <script src="tree-trash.js"></script>
+    <script src="shell.js"></script>
+    <script src="finder-drop.js"></script>
+  </body>
+</html>

@@ -1,0 +1,1025 @@
+#!/bin/sh
+""":"
+bridge_dir=$(/usr/bin/dirname "$0")
+if [ -x "$bridge_dir/../Runtime/bin/python3" ]; then
+    exec "$bridge_dir/../Runtime/bin/python3" -EsB "$0" "$@"
+fi
+exec /usr/bin/env python3 -EsB "$0" "$@"
+":"""
+"""Local document links for Samare. Python 3.9+, standard library."""
+import argparse
+import contextlib
+import errno
+import fcntl
+import hashlib
+import hmac
+import http.client
+import json
+import mimetypes
+import os
+import plistlib
+import shlex
+import re
+import secrets
+import selectors
+import shutil
+import sqlite3
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
+
+sys.dont_write_bytecode = True
+import references
+
+
+HERE = Path(__file__).resolve().parent
+ASSETS = HERE.parent if (HERE.parent / "editor.js").is_file() else HERE.parent / "Resources"
+STATE = Path(os.environ.get("SAMARE_BRIDGE_HOME", str(Path.home() / "Library/Application Support/Samare/Bridge")))
+HOST = "127.0.0.1"
+SERVICE_BUILD = hashlib.sha256(Path(__file__).read_bytes() + Path(references.__file__).read_bytes()).hexdigest()
+DOC_ID = r"[A-Za-z0-9_-]{32}"
+TYPES = {".md", ".markdown", ".mdown", ".mkd", ".mkdn", ".mdtext", ".txt", ".csv", ".tsv", ".json", ".jsonl", ".ndjson"}
+MAX_REQUEST = 192 * 1024 * 1024
+WRITE_LOCK = threading.Lock()
+
+
+def prepare():
+    os.umask(0o077)
+    STATE.mkdir(parents=True, exist_ok=True, mode=0o700)
+    st = STATE.lstat()
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise ValueError("Bridge storage must be a private directory owned by this user.")
+    with database() as db:
+        db.execute("CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        db.execute("CREATE TABLE IF NOT EXISTS pending_reviews (doc TEXT, session TEXT, version TEXT, marked TEXT, saved REAL, PRIMARY KEY(doc,session))")
+        db.execute("DELETE FROM pending_reviews WHERE marked IS NULL AND saved < ?", (time.time() - 7*86400,))
+        db.execute("CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL)")
+        # Serialize first-time migrations when several agents request links together.
+        db.execute("INSERT OR IGNORE INTO settings VALUES ('schema-version', '1')")
+        if "asset_root" not in {row[1] for row in db.execute("PRAGMA table_info(documents)")}:
+            db.execute("ALTER TABLE documents ADD COLUMN asset_root TEXT")
+        db.execute("INSERT OR IGNORE INTO settings VALUES ('secret', ?)", (secrets.token_urlsafe(32),))
+
+
+@contextlib.contextmanager
+def database():
+    db = sqlite3.connect(str(STATE / "bridge.sqlite3"), timeout=8)
+    try:
+        with db:
+            yield db
+    finally:
+        db.close()
+
+
+def setting(key, default=""):
+    if not (STATE / "bridge.sqlite3").is_file():
+        return default
+    with database() as db:
+        result = db.execute("SELECT value FROM settings WHERE name=?", (key,)).fetchone()
+        return result[0] if result else default
+
+
+def set_value(key, value):
+    with database() as db:
+        db.execute("INSERT OR REPLACE INTO settings VALUES (?, ?)", (key, str(value)))
+
+
+def bridge_enabled():
+    # Older versions recorded activation before they stored an explicit preference.
+    return setting("enabled", setting("activated", "0")) == "1"
+
+
+def lookup(doc_id):
+    with database() as db:
+        row = db.execute("SELECT path FROM documents WHERE id=?", (doc_id,)).fetchone()
+    if row is None:
+        raise FileNotFoundError
+    return Path(row[0])
+
+
+def register(path, asset_root=None):
+    path = Path(path).expanduser().resolve(strict=True)
+    if path.suffix.lower() not in TYPES or not path.is_file():
+        raise ValueError("Choose a supported text document.")
+    root = Path(asset_root).expanduser().resolve(strict=True) if asset_root else path.parent
+    if not root.is_dir() or path != root and root not in path.parents:
+        raise ValueError("The document must be inside its asset root.")
+    with database() as db:
+        db.execute("INSERT OR IGNORE INTO documents(id,path,asset_root) VALUES (?, ?, ?)", (secrets.token_urlsafe(24), str(path), str(root)))
+        if asset_root:
+            db.execute("UPDATE documents SET asset_root=? WHERE path=?", (str(root),str(path)))
+        return db.execute("SELECT id FROM documents WHERE path=?", (str(path),)).fetchone()[0]
+
+
+def resolve_reference(doc_id, ref, is_image):
+    doc = lookup(doc_id)
+    if doc.suffix.lower() not in references.MARKDOWN:
+        raise FileNotFoundError
+    ref = references.canonical_ref(ref)
+    source = read_file(doc).decode("utf-8-sig")
+    if ref not in references.references(source)[is_image]:
+        raise FileNotFoundError
+    with database() as db:
+        root = Path(db.execute("SELECT asset_root FROM documents WHERE id=?", (doc_id,)).fetchone()[0] or doc.parent)
+        if is_image:
+            return references.raster(ref, doc, root)
+        local, fragment = references.relative_name(ref)
+        if not local:
+            return {"id":doc_id, "heading":fragment}
+        candidate = doc.parent / local
+        clean = root / references.inside(candidate, root)
+        candidates = [clean]
+        if not clean.suffix:
+            candidates.extend(clean.with_suffix(suffix) for suffix in sorted(references.MARKDOWN))
+        for item in candidates:
+            record = db.execute("SELECT id FROM documents WHERE path=?", (str(item),)).fetchone()
+            if record:
+                return {"id":record[0], "heading":fragment}
+        if "/" not in local:
+            # Resolve unqualified wiki names only among explicitly linked documents
+            # inside this same registered workspace. Ambiguous names need a path.
+            matches = [(i,p) for i,p in db.execute("SELECT id,path FROM documents") if root in Path(p).parents and Path(p).name in {c.name for c in candidates}]
+            if len(matches) == 1:
+                return {"id":matches[0][0], "heading":fragment}
+    raise FileNotFoundError
+
+
+def read_file(path):
+    if path.resolve(strict=True) != path:
+        raise ValueError("The linked file has moved.")
+    fd = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise ValueError("The linked item is no longer a regular file.")
+        return handle.read()
+
+
+def digest(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+class StaleRevision(Exception):
+    pass
+
+
+class SetupRequired(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def coordinate_directory(path):
+    # The native editor takes the same short-lived lock across its recheck and rename.
+    directory = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        try:
+            fcntl.flock(directory, fcntl.LOCK_EX)
+        except OSError as exc:
+            if exc.errno not in (errno.ENOTSUP, errno.EOPNOTSUPP):
+                raise
+        yield
+    finally:
+        os.close(directory)
+
+
+def atomic_save(path, text, version):
+    with WRITE_LOCK, coordinate_directory(path.parent):
+        previous = read_file(path)
+        if not hmac.compare_digest(digest(previous), version):
+            raise StaleRevision
+        encoding = "utf-8-sig" if previous.startswith(b"\xef\xbb\xbf") else "utf-8"
+        if b"\r\n" in previous and b"\n" not in previous.replace(b"\r\n", b""):
+            text = text.replace("\r\n", "\n").replace("\n", "\r\n")
+        updated = text.encode(encoding)
+        if updated == previous:
+            return version
+        with tempfile.NamedTemporaryFile(dir=str(path.parent), prefix=".samare-", delete=False) as tmp:
+            name = tmp.name
+        try:
+            shutil.copystat(str(path), name, follow_symlinks=False)
+            with open(name, "wb") as dest:
+                dest.write(updated)
+                dest.flush()
+                os.fsync(dest.fileno())
+            if digest(read_file(path)) != version:
+                raise StaleRevision
+            os.replace(name, str(path))
+        finally:
+            if os.path.lexists(name):
+                os.unlink(name)
+        return digest(updated)
+
+
+def asset_file(route):
+    local = {"/bridge.css": "web.css", "/bridge.js": "web.js"}
+    if route in local:
+        return HERE / local[route]
+    if route in ("/samare-mark.svg", "/typefaces.css", "/editor.css", "/icons.js", "/editor.js", "/vendor/editor-libs.js", "/vendor/mermaid.min.js", "/vendor/katex.min.css", "/vendor/pele.global.js", "/diagram.js", "/review.js", "/review.css", "/lib/diff.min.js", "/merge.js"):
+        return ASSETS / route[1:]
+    if re.fullmatch(r"/(?:vendor/)?fonts/[A-Za-z0-9_.-]+\.(?:woff2?|ttf|otf)", route):
+        return ASSETS / route[1:]
+    return None
+
+
+INTEGRATION_HOME = Path(os.environ.get("SAMARE_INTEGRATION_HOME", str(Path.home())))
+CLIENT_DIRS = {"codex": ".codex", "claude": ".claude", "cursor": ".cursor"}
+SERVICE_LABEL = "io.github.digidai.samare.bridge"
+
+
+def generated_write(path, data, key, mode=0o600):
+    if path.is_symlink():
+        raise ValueError("This integration path is a symbolic link.")
+    if path.exists():
+        current = digest(path.read_bytes())
+        if current == digest(data):
+            if stat.S_IMODE(path.stat().st_mode) != mode:
+                path.chmod(mode)
+            set_value(key, current)
+            return
+        if current != setting(key):
+            raise ValueError("An existing or modified integration is at this location. Its contents were preserved.")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=str(path.parent), delete=False) as stream:
+        name = stream.name
+        stream.write(data)
+        os.fchmod(stream.fileno(), mode)
+    try:
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+    set_value(key, digest(data))
+
+
+def owned(path, key):
+    recorded = setting(key)
+    try:
+        return bool(recorded) and not path.is_symlink() and path.is_file() and digest(path.read_bytes()) == recorded
+    except OSError:
+        return False
+
+
+def generated_remove(path, key, expected=None):
+    if path.exists() or path.is_symlink():
+        matches_template = (expected is not None and not path.is_symlink() and path.is_file()
+                            and path.read_bytes() == expected)
+        if not matches_template and not owned(path, key):
+            raise ValueError("The integration was modified. Its contents were preserved.")
+        path.unlink()
+    set_value(key, "")
+
+
+def command_path():
+    return INTEGRATION_HOME / ".local" / "bin" / "samare"
+
+
+def fallback_path():
+    return STATE / "bin" / "samare"
+
+
+def launcher_for(target):
+    return ('#!/bin/sh\nexec ' + shlex.quote(str(target)) + ' "$@"\n').encode()
+
+
+def command_files():
+    return [(fallback_path(), launcher_for(Path(__file__).resolve()), "fallback-launcher"),
+            (command_path(), launcher_for(fallback_path()), "command-launcher")]
+
+
+def change_command(installing):
+    files = command_files()
+    if installing:
+        # A foreign public command must not prevent the independently usable
+        # private fallback from being installed, or vice versa.
+        issues = []
+        for path, content, key in files:
+            try:
+                generated_write(path, content, key, mode=0o700)
+            except (OSError, ValueError) as error:
+                issues.append(f"{path}: {error}")
+        if issues:
+            raise ValueError("\n".join(issues))
+        return
+    for path, expected, key in files:
+        if managed_status(path, expected, key, executable=True) == "modified":
+            raise ValueError(f"The existing file at {path} was preserved. Move it aside to repair this command.")
+    for path, content, key in reversed(files):
+        generated_remove(path, key, content)
+
+
+def managed_status(path, content, key, executable=False):
+    if not path.exists() and not path.is_symlink():
+        return "missing"
+    if path.is_symlink() or not path.is_file():
+        return "modified"
+    try:
+        if path.read_bytes() == content:
+            return "current" if not executable or os.access(path, os.X_OK) else "outdated"
+    except OSError:
+        return "modified"
+    return "outdated" if owned(path, key) else "modified"
+
+
+def skill_path(client):
+    directory = ".agents" if client == "shared" else CLIENT_DIRS[client]
+    return INTEGRATION_HOME / directory / "skills" / "samare" / "SKILL.md"
+
+
+def skill_content():
+    program = shlex.quote(str(fallback_path()))
+    launcher = shlex.quote(str(command_path()))
+    return f"""---
+name: samare
+description: Open a local document in Samare and return a link to its editable view.
+---
+
+# Share a local document
+
+When the user requests a view or edit of a local Markdown document, or you finish writing one for them, register it with Samare. The same command opens CSV, TSV, JSON, JSONL and plain text. Use an absolute path.
+
+```sh
+{launcher} url "/absolute/path/to/document.md"
+```
+
+Give the user the exact returned URL once per document. It works on this Mac and uses an available port. Exclude internal notes, caches and temporary files unless asked for them.
+
+For a missing launcher, use {program} with the same arguments. When a sandbox blocks the local connection, use the host's authorization flow and retry the same command. Run `doctor` with that authorization if it still fails. To enable sharing, open Samare Settings and choose Use in Agent.
+"""
+
+
+def change_skill(client, installing):
+    path = skill_path(client)
+    key = "skill-" + client
+    if redirected_skill(path):
+        if installing and skill_status(client) == "current":
+            return
+        raise ValueError(f"The existing skill link at {path} was preserved.")
+    if installing:
+        generated_write(path, skill_content().encode(), key)
+        return
+    generated_remove(path, key, skill_content().encode())
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+
+
+def redirected_skill(path):
+    try:
+        return (path.is_symlink() or path.parent.is_symlink()
+                or not path.resolve().is_relative_to(INTEGRATION_HOME.resolve()))
+    except (OSError, RuntimeError):
+        return True
+
+
+def using_fallback(client):
+    path = skill_path(client)
+    shared = skill_path("shared")
+    if client == "shared" or not redirected_skill(path) or redirected_skill(shared):
+        return False
+    try:
+        return path.resolve() == shared.resolve() and managed_status(
+            shared, skill_content().encode(), "skill-shared") == "current"
+    except (OSError, RuntimeError):
+        return False
+
+
+def skill_status(client):
+    path = skill_path(client)
+    if redirected_skill(path):
+        return "current" if using_fallback(client) else "modified"
+    return managed_status(path, skill_content().encode(), "skill-" + client)
+
+
+def detect_client(client):
+    if (INTEGRATION_HOME / CLIENT_DIRS[client]).is_dir():
+        return True
+    installed_apps = os.environ.get("SAMARE_DETECTED_CLIENTS", "").split(",")
+    return client in installed_apps or shutil.which(client) is not None
+
+
+def repair_integrations():
+    issues = []
+    try:
+        change_command(True)
+    except (OSError, ValueError) as error:
+        issues.append(str(error))
+    for client in CLIENT_DIRS:
+        if detect_client(client):
+            try:
+                change_skill(client, True)
+            except (OSError, ValueError) as error:
+                issues.append(f"{client}: {error}")
+    return issues
+
+
+def agent_plist():
+    return INTEGRATION_HOME / "Library" / "LaunchAgents" / (SERVICE_LABEL + ".plist")
+
+
+def launchctl(*args, check=True):
+    result = subprocess.run(["/bin/launchctl", *args], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=10)
+    if check and result.returncode:
+        raise ValueError("macOS could not update the background service: " + result.stderr.strip())
+    return result.returncode
+
+
+def wait_stopped():
+    for _ in range(100):
+        if not service_lock_held():
+            return
+        time.sleep(0.04)
+    raise ValueError("The existing bridge did not stop in time.")
+
+
+def stop_service():
+    if control("status") and control("stop"):
+        wait_stopped()
+
+
+def spawn_service(log):
+    # This helper intentionally outlives the CLI that starts it.
+    with open(os.devnull, "rb") as stdin:
+        actions = [(os.POSIX_SPAWN_DUP2, stdin.fileno(), 0),
+                   (os.POSIX_SPAWN_DUP2, log.fileno(), 1),
+                   (os.POSIX_SPAWN_DUP2, log.fileno(), 2)]
+        return os.posix_spawn(sys.executable, [sys.executable, str(Path(__file__).resolve()), "serve"],
+                              os.environ, file_actions=actions, setsid=True)
+
+
+def start_service():
+    live = control("status")
+    # A waking helper can still own the listener while its first HTTP request
+    # times out. Reuse that owner, or start a replacement once it exits.
+    deadline = time.monotonic() + 12
+    while not live and service_lock_held():
+        if time.monotonic() >= deadline:
+            raise ValueError("The existing local bridge has not resumed yet. Try again in a moment.")
+        time.sleep(.04)
+        live = control("status")
+    if live and live.get("build") != SERVICE_BUILD:
+        # A signed reply identifies our own older helper, including releases
+        # predating build fingerprints. Never signal an unknown listener.
+        stop_service()
+        live = {}
+    if not live:
+        log_path = STATE / "service.log"
+        with log_path.open("ab") as log:
+            initial_size = log.tell()
+            child = spawn_service(log)
+        for _ in range(75):
+            live = control("status")
+            if live:
+                break
+            exited, code = os.waitpid(child, os.WNOHANG) if child else (0, 0)
+            if exited and code:
+                with log_path.open("rb") as log:
+                    log.seek(max(initial_size, log_path.stat().st_size - 4096))
+                    lines = log.read(4096).decode("utf-8", errors="replace").splitlines()
+                reported = next((line[8:] for line in reversed(lines) if line.startswith("Bridge: ")), "")
+                raise ValueError(reported or "The local bridge exited before startup; see service.log.")
+            if exited:
+                child = None
+            # A second service may already hold service.lock while it is binding.
+            time.sleep(.04)
+    if not live.get("running"):
+        raise ValueError("The local bridge did not become ready. See service.log in Bridge storage.")
+    set_value("activated", "1")
+    return live
+
+
+def change_background(enabling, resume_foreground=True):
+    plist = agent_plist()
+    key = "background-plist"
+    domain = "gui/" + str(os.getuid())
+    target = domain + "/" + SERVICE_LABEL
+    ours = owned(plist, key)
+    if (plist.exists() or plist.is_symlink()) and not ours:
+        raise ValueError("A background service configuration already exists here. Its contents were preserved.")
+    # Custom installation homes (including --isolated) must never register a
+    # job with the Mac's real user launchd domain.
+    session_only = bool(os.environ.get("SAMARE_INTEGRATION_HOME"))
+    loaded = not session_only and launchctl("print", target, check=False) == 0
+    if loaded and not ours:
+        raise ValueError("A service already uses this background label.")
+    if not enabling:
+        if loaded:
+            launchctl("bootout", target)
+            stop_service()
+        generated_remove(plist, key)
+        if loaded and resume_foreground and bridge_enabled():
+            start_service()
+        return
+    if not bridge_enabled():
+        raise ValueError("Enable the bridge before enabling its background service.")
+    content = plistlib.dumps({
+        "Label": SERVICE_LABEL,
+        "ProgramArguments": [sys.executable, str(Path(__file__).resolve()), "serve"],
+        "RunAtLoad": True,
+        "EnvironmentVariables": {"SAMARE_BRIDGE_HOME": str(STATE)},
+        "ProcessType": "Background"
+    })
+    if loaded and ours and plist.read_bytes() == content and control("status"):
+        return
+    if session_only:
+        generated_write(plist, content, key)
+        start_service()
+        return
+    old_content = plist.read_bytes() if ours else None
+    was_running = bool(control("status"))
+    if loaded:
+        launchctl("bootout", target)
+    stop_service()
+    generated_write(plist, content, key)
+    try:
+        launchctl("bootstrap", domain, str(plist))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        if old_content is None:
+            generated_remove(plist, key)
+        else:
+            generated_write(plist, old_content, key)
+            if loaded:
+                launchctl("bootstrap", domain, str(plist), check=False)
+        if was_running and not loaded:
+            start_service()
+        raise
+
+
+def integrations():
+    status = {client: skill_status(client) == "current" for client in CLIENT_DIRS}
+    status["background"] = owned(agent_plist(), "background-plist")
+    return status
+
+
+def doctor():
+    enabled = bridge_enabled()
+    states = [managed_status(*item, executable=True) for item in command_files()]
+    status = next(s for s in ("modified", "outdated", "missing", "current") if s in states)
+    candidate = shutil.which(command_path().name)
+    try:
+        command_on_path = bool(status == "current" and candidate and Path(candidate).samefile(command_path()))
+    except OSError:
+        command_on_path = False
+    details = {}
+    issues = []
+    if status == "modified" or enabled and status != "current":
+        issues.append(f"Samare command: {status}.")
+    for client in CLIENT_DIRS:
+        state = skill_status(client)
+        detected = detect_client(client)
+        details[client] = {"detected": detected, "installed": state == "current",
+                           "status": state, "path": str(skill_path(client)),
+                           "usingFallback": state == "current" and using_fallback(client)}
+        if state == "modified" or enabled and detected and state != "current":
+            issues.append(f"{client}: skill {state} at {skill_path(client)}.")
+    live = control("status")
+    saved = int(setting("saved-port", setting("port", "0"))) or None
+    return {
+        "running": bool(live), "enabled": enabled,
+        "port": live.get("port") or int(setting("port", "0")) or None,
+        "savedPort": saved, "servingPorts": live.get("servingPorts", []),
+        "portConflict": live.get("portConflict"),
+        "background": owned(agent_plist(), "background-plist"),
+        "backgroundScope": "session" if os.environ.get("SAMARE_INTEGRATION_HOME") else "login",
+        "commandStatus": status, "commandInstalled": status == "current",
+        "commandOnPath": command_on_path, "commandPath": str(command_path()),
+        "fallbackPath": str(fallback_path()), "fallbackInstalled": states[0] == "current",
+        "clients": {name: info["installed"] for name, info in details.items()},
+        "clientDetails": details, "issues": issues,
+    }
+
+
+def print_doctor(as_json):
+    info = doctor()
+    if as_json:
+        return print(json.dumps(info))
+    print("Samare Agent Bridge")
+    print("Use in Agent:", "enabled" if info["enabled"] else "disabled")
+    print("Local service:", "running" if info["running"] else "stopped")
+    if info["portConflict"]:
+        conflict = info["portConflict"]
+        owner = conflict.get("process") or "another process"
+        print(f"Saved port {conflict['port']} is in use by {owner}. Serving links on {info['port']} while waiting.")
+    print("Background:", "enabled" if info["background"] else "disabled")
+    print(f"Command: {info['commandStatus']} ({info['commandPath']})")
+    print("Command on PATH:", "yes" if info["commandOnPath"] else "no")
+    print(f"Private fallback: {'current' if info['fallbackInstalled'] else 'unavailable'} ({info['fallbackPath']})")
+    for name, item in info["clientDetails"].items():
+        source = "shared fallback" if item["usingFallback"] else item["path"]
+        print(f"{name}: {item['status']} ({source})")
+    for issue in info["issues"]:
+        print("Issue:", issue)
+
+
+def signed(secret, value):
+    return hmac.new(secret.encode(), value.encode(), hashlib.sha256).hexdigest()
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "SamareBridge"
+    sys_version = ""
+
+    def log_message(self, *args):
+        # A document link grants access to one file. Keep it out of logs.
+        pass
+
+    @property
+    def authority(self):
+        return HOST + ":" + str(self.server.server_port)
+
+    def send_data(self, code, body=b"", kind="text/plain; charset=utf-8", headers=()):
+        self.send_response(code)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'")
+        for key, value in headers:
+            self.send_header(key, value)
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
+
+    def json(self, code, data):
+        self.send_data(code, json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+
+    def valid_origin(self, writing=False):
+        if self.headers.get_all("Host", []) != [self.authority]:
+            return False
+        origins = self.headers.get_all("Origin", [])
+        if origins and origins != ["http://" + self.authority]:
+            return False
+        if writing and (not origins or self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json"):
+            return False
+        return not self.headers.get("Sec-Fetch-Site") == "cross-site" or not writing
+
+    def control_nonce(self, action):
+        nonce = self.headers.get("X-Samare-Nonce", "")
+        proof = self.headers.get("X-Samare-Control", "")
+        if not re.fullmatch(r"[a-f0-9]{32}", nonce) or not re.fullmatch(r"[a-f0-9]{64}", proof):
+            return None
+        valid = hmac.compare_digest(proof, signed(self.server.secret, action + ":" + nonce))
+        return nonce if valid else None
+
+    def do_GET(self):
+        if not self.valid_origin():
+            return self.json(403, {"error": "This request did not originate at the local bridge."})
+        route = urlsplit(self.path).path
+        if route == "/control/status":
+            nonce = self.control_nonce("status")
+            if nonce:
+                return self.json(200, {**self.server.bridge_status, "proof": signed(self.server.secret, "reply:" + nonce)})
+        match = re.fullmatch(r"/(d|api)/(" + DOC_ID + ")", route)
+        try:
+            if match:
+                doc = lookup(match.group(2))
+                if match.group(1) == "d":
+                    return self.send_data(200, (HERE / "web.html").read_bytes(), "text/html; charset=utf-8")
+                data = read_file(doc)
+                rev = digest(data)
+                if self.headers.get("If-None-Match") == '"' + rev + '"':
+                    return self.send_data(304)
+                result = {"name": doc.name, "displayPath": str(Path(doc.parent.name) / doc.name),
+                          "text": data.decode("utf-8-sig"), "version": rev}
+                session = parse_qs(urlsplit(self.path).query).get("reviewSession", [""])[0]
+                if re.fullmatch(r"[a-f0-9]{32}",session):
+                    with database() as db:
+                        result["reviewClosed"] = bool(db.execute("SELECT 1 FROM pending_reviews WHERE doc=? AND session=? AND marked IS NULL",
+                                                                 (match.group(2),session)).fetchone())
+                return self.json(200,result)
+            link = re.fullmatch(r"/(image|link)/(" + DOC_ID + ")", route)
+            if link:
+                params = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                if set(params) != {"ref"} or len(params["ref"]) != 1 or len(params["ref"][0]) > 4096:
+                    raise FileNotFoundError
+                is_image = link.group(1) == "image"
+                answer = resolve_reference(link.group(2), params["ref"][0], is_image)
+                if is_image:
+                    mime, content = answer
+                    return self.send_data(200, content, mime)
+                return self.json(200, answer)
+            asset = asset_file(route)
+            if asset is not None and asset.is_file():
+                kind = "text/javascript" if asset.suffix == ".js" else mimetypes.guess_type(asset.name)[0] or "application/octet-stream"
+                return self.send_data(200, asset.read_bytes(), kind)
+            self.json(404, {"error": "Link or resource not found."})
+        except FileNotFoundError:
+            self.json(404, {"error": "This document is unavailable."})
+        except (ValueError, OSError):
+            self.json(422, {"error": "Unable to read this document as UTF-8 text."})
+
+    def do_POST(self):
+        if not self.valid_origin(writing=True):
+            return self.json(403, {"error": "Use this document's local bridge."})
+        route = urlsplit(self.path).path
+        if route == "/control/stop":
+            nonce = self.control_nonce("stop")
+            if nonce:
+                self.json(200, {"stopping": True, "proof": signed(self.server.secret, "reply:" + nonce)})
+                self.server.stop_event.set()
+                return
+        open_doc = re.fullmatch(r"/api/docs/(" + DOC_ID + r")/open-in-app", route)
+        if open_doc:
+            try:
+                size = int(self.headers.get("Content-Length", "-1"))
+                if size < 0 or size > 32 or json.loads(self.rfile.read(size)) != {}:
+                    return self.json(400, {"error": "This action takes no parameters."})
+                doc = lookup(open_doc.group(1))
+                if doc.resolve(strict=True) != doc or not doc.is_file() or doc.suffix.lower() not in TYPES:
+                    raise FileNotFoundError
+                bundle = HERE.parent.parent.parent
+                target = ["-a", str(bundle)] if bundle.suffix == ".app" else ["-b", "io.github.digidai.samare"]
+                subprocess.run(["/usr/bin/open", *target, str(doc)], check=True, timeout=8,
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return self.json(200, {"opened": True})
+            except FileNotFoundError:
+                return self.json(404, {"error": "This document is unavailable."})
+            except ValueError:
+                return self.json(400, {"error": "This action takes no parameters."})
+            except (OSError, subprocess.SubprocessError):
+                return self.json(503, {"error": "Samare could not open this document."})
+        if not re.fullmatch(r"/api/" + DOC_ID, route):
+            return self.json(404, {"error": "Link not found."})
+        try:
+            size = int(self.headers.get("Content-Length", "-1"))
+            if size < 0 or size > MAX_REQUEST:
+                return self.json(413, {"error": "Unsupported request size."})
+            doc = lookup(route[5:])
+            payload = json.loads(self.rfile.read(size))
+            if not isinstance(payload, dict):
+                raise ValueError
+            session = payload.get("reviewSession")
+            if session is not None and (not isinstance(session,str) or not re.fullmatch(r"[a-f0-9]{32}",session)):
+                raise ValueError
+            if payload.get("finishReview") is True and session:
+                with database() as db:
+                    row = db.execute("SELECT version, marked FROM pending_reviews WHERE doc=? AND session=?",
+                                     (route[5:],session)).fetchone()
+                    if row is None:
+                        raise StaleRevision
+                    revision = atomic_save(doc,row[1],row[0]) if row[1] is not None else row[0]
+                    db.execute("UPDATE pending_reviews SET marked=NULL,version=?,saved=? WHERE doc=? AND session=?",
+                               (revision,time.time(),route[5:],session))
+                return self.json(200, {"version":revision})
+            rev = payload.get("version")
+            if not isinstance(rev,str) or not re.fullmatch(r"[a-f0-9]{64}",rev):
+                raise ValueError
+            patch = payload.get("reviewPatch")
+            if patch is not None:
+                if not session or not isinstance(patch,dict) or not isinstance(patch.get("text"),str):
+                    raise ValueError
+                # DOM offsets count UTF-16 code units. Recheck this filesystem
+                # revision again inside atomic_save before committing the patch.
+                raw = read_file(doc)
+                if digest(raw) != rev:
+                    raise StaleRevision
+                source = raw.decode("utf-8-sig").encode("utf-16-le")
+                start, end = patch.get("from"), patch.get("to")
+                if type(start) is not int or type(end) is not int or not 0 <= start <= end <= len(source)//2:
+                    raise ValueError
+                payload["text"] = (source[:start*2] + patch["text"].encode("utf-16-le") + source[end*2:]).decode("utf-16-le")
+            if not isinstance(payload.get("text"),str):
+                raise ValueError
+            marked = payload.get("preparedReview")
+            if marked is not None and (not session or not isinstance(marked,str)):
+                raise ValueError
+            revision = atomic_save(doc, payload["text"], rev)
+            if session:
+                with database() as db:
+                    db.execute("DELETE FROM pending_reviews WHERE doc=? AND marked IS NOT NULL AND version<>?",
+                               (route[5:],revision))
+                    if marked is not None or payload.get("closeReview") is True:
+                        db.execute("INSERT OR REPLACE INTO pending_reviews VALUES (?,?,?,?,?)",
+                                   (route[5:],session,revision,marked,time.time()))
+                    else:
+                        db.execute("DELETE FROM pending_reviews WHERE doc=? AND session=?", (route[5:],session))
+            self.json(200, {"version": revision})
+        except StaleRevision:
+            self.json(409, {"error": "Another edit was saved first."})
+        except FileNotFoundError:
+            self.json(404, {"error": "This document is unavailable."})
+        except (ValueError, OSError):
+            self.json(422, {"error": "Unable to save the document."})
+
+
+def service_lock_held():
+    try:
+        with (STATE / "service.lock").open("rb") as lock:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            return False
+    except BlockingIOError:
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def control(action):
+    port = int(setting("port", "0"))
+    if not port or not service_lock_held():
+        return {}
+    connection = http.client.HTTPConnection(HOST, port, timeout=0.75)
+    try:
+        method = "GET" if action == "status" else "POST"
+        authority = f"http://{HOST}:{port}"
+        secret = setting("secret")
+        nonce = secrets.token_hex(16)
+        headers = {"Origin": authority, "X-Samare-Nonce": nonce,
+                   "X-Samare-Control": signed(secret, action + ":" + nonce), "Content-Type": "application/json"}
+        connection.request(method, "/control/" + action, headers=headers)
+        response = connection.getresponse()
+        if response.status != 200:
+            return {}
+        result = json.loads(response.read(4096))
+        if not isinstance(result, dict) or result.get("proof") != signed(secret, "reply:" + nonce):
+            return {}
+        return result
+    except (ValueError, OSError, http.client.HTTPException):
+        return {}
+    finally:
+        connection.close()
+
+
+def bind_server(port):
+    try:
+        return ThreadingHTTPServer((HOST, port), Handler)
+    except OSError as exc:
+        if not port or exc.errno != errno.EADDRINUSE:
+            raise
+        return None
+
+
+def port_owner(port):
+    result = {"port": port}
+    try:
+        output = subprocess.run(["/usr/sbin/lsof", "-nP", "-a", f"-iTCP:{port}", "-sTCP:LISTEN", "-Fpcn"],
+                                capture_output=True, text=True, timeout=2).stdout
+        pid, name = None, None
+        for line in output.splitlines():
+            if line.startswith("p"):
+                pid, name = line[1:], None
+            elif line.startswith("c"):
+                name = line[1:]
+            elif line in (f"n127.0.0.1:{port}", f"n*:{port}") and pid and name:
+                result.update(pid=int(pid), process=name)
+                break
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    return result
+
+
+def serve():
+    if not bridge_enabled():
+        raise SetupRequired("Use in Agent is disabled. Enable it in Samare settings.")
+    with (STATE / "service.lock").open("a+") as lock, contextlib.ExitStack() as stack:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        last = int(setting("port", "0"))
+        saved = int(setting("saved-port", str(last)))
+        ports = list(dict.fromkeys(port for port in [saved, last, *json.loads(setting("link-ports", "[]"))] if port))
+        secret = setting("secret")
+        status = {"running": True, "build": SERVICE_BUILD, "pid": os.getpid()}
+        listeners = {}
+        stop = threading.Event()
+        selector = stack.enter_context(selectors.DefaultSelector())
+
+        def listen(port):
+            server = bind_server(port)
+            if server is None:
+                return None
+            stack.enter_context(server)
+            server.secret, server.bridge_status, server.stop_event = secret, status, stop
+            listeners[server.server_port] = server
+            selector.register(server, selectors.EVENT_READ)
+            return server.server_port
+
+        for port in ports:
+            listen(port)
+        if not listeners:
+            port = listen(0)
+            ports.append(port)
+        if not saved:
+            saved = next(iter(listeners))
+        set_value("saved-port", saved)
+        set_value("link-ports", json.dumps(ports))
+        next_check = 0
+        owner_check = 0
+        while not stop.is_set():
+            now = time.monotonic()
+            if now >= next_check:
+                for port in ports:
+                    if port not in listeners:
+                        listen(port)
+                primary = saved if saved in listeners else next(iter(listeners))
+                if status.get("port") != primary:
+                    set_value("port", primary)
+                if saved in listeners:
+                    status["portConflict"] = None
+                elif now >= owner_check:
+                    status["portConflict"] = port_owner(saved)
+                    owner_check = now + 5
+                status.update(port=primary, savedPort=saved, servingPorts=list(listeners))
+                next_check = now + 1
+            for key, _ in selector.select(.2):
+                key.fileobj.handle_request()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="action", required=True)
+    link = sub.add_parser("url", help="get a persistent link for a local document")
+    link.add_argument("file")
+    link.add_argument("--asset-root", help="workspace root for images referenced by this note; default is its folder")
+    sub.add_parser("resolve", help="resolve a registered link id on this Mac").add_argument("id")
+    sub.add_parser("doctor", help="check the bridge").add_argument("--json", action="store_true")
+    sub.add_parser("clients", help="show optional integrations").add_argument("--json", action="store_true")
+    for name in ("install-skill", "remove-skill"):
+        sub.add_parser(name).add_argument("client", choices=[*CLIENT_DIRS, "shared"])
+    sub.add_parser("print-skill", help="print the agent skill for manual installation")
+    sub.add_parser("install-command", help="install the user command and its private fallback")
+    sub.add_parser("remove-command", help="remove this installation's managed command and fallback")
+    sub.add_parser("repair", help="repair the command and skills for detected clients")
+    sub.add_parser("background", help="manage the optional macOS login service").add_argument("state", choices=("enable", "disable"))
+    for name in ("start", "stop", "enable", "disable", "serve", "app-open", "app-close"):
+        sub.add_parser(name)
+    argv = sys.argv[1:]
+    # URL-safe identifiers can begin with a dash. Treat valid IDs as positional values.
+    if len(argv) == 2 and argv[0] == "resolve" and re.fullmatch(DOC_ID, argv[1]):
+        argv = ["resolve", "--", argv[1]]
+    args = parser.parse_args(argv)
+    if args.action == "print-skill":
+        return print(skill_content(), end="")
+    if not (STATE / "bridge.sqlite3").exists():
+        if args.action in ("app-open", "app-close", "stop"):
+            return
+        if args.action == "doctor":
+            return print_doctor(args.json)
+        if args.action == "clients":
+            return print(json.dumps(integrations()))
+    prepare()
+    if args.action == "serve":
+        return serve()
+    if args.action == "resolve":
+        if not re.fullmatch(DOC_ID, args.id):
+            raise ValueError("Invalid document id.")
+        return print(lookup(args.id))
+    with (STATE / "cli.lock").open("a+") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if args.action == "app-open" and not bridge_enabled():
+            return
+        if args.action == "app-close" and owned(agent_plist(), "background-plist"):
+            return
+        if args.action == "clients":
+            return print(json.dumps(integrations()))
+        if args.action in ("install-skill", "remove-skill"):
+            return change_skill(args.client, args.action == "install-skill")
+        if args.action in ("install-command", "remove-command"):
+            return change_command(args.action == "install-command")
+        if args.action == "background":
+            return change_background(args.state == "enable")
+        if args.action == "doctor":
+            return print_doctor(args.json)
+        if args.action == "disable":
+            set_value("enabled", "0")
+            try:
+                if owned(agent_plist(), "background-plist"):
+                    change_background(False, resume_foreground=False)
+            finally:
+                stop_service()
+            return
+        if args.action == "enable":
+            set_value("enabled", "1")
+        if args.action in ("stop", "app-close"):
+            return stop_service()
+        issues = repair_integrations() if args.action in ("enable", "repair") else []
+        if args.action == "repair" and not bridge_enabled():
+            if issues:
+                raise ValueError("\n".join(issues))
+            return
+        if not bridge_enabled():
+            raise SetupRequired("Use in Agent is disabled. Enable it in Samare settings.")
+        link_id = register(args.file,args.asset_root) if args.action == "url" else None
+        live = start_service()
+        if issues:
+            raise ValueError("\n".join(issues))
+        if link_id:
+            print(f"http://{HOST}:{live['port']}/d/{link_id}")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SetupRequired as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(78)
+    except (OSError, ValueError, sqlite3.Error, subprocess.SubprocessError) as exc:
+        print("Bridge:", str(exc) or "Document unavailable.", file=sys.stderr)
+        sys.exit(1)

@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>Samare — a pair of maple seeds</title>
+  <defs>
+    <linearGradient id="forest" gradientUnits="userSpaceOnUse" x1="44" y1="14" x2="212" y2="242">
+      <stop stop-color="#365647"/>
+      <stop offset=".52" stop-color="#244138"/>
+      <stop offset="1" stop-color="#152E29"/>
+    </linearGradient>
+    <linearGradient id="straw" gradientUnits="userSpaceOnUse" x1="53" y1="57" x2="119" y2="177">
+      <stop stop-color="#FFF0BE"/>
+      <stop offset=".55" stop-color="#F4D392"/>
+      <stop offset="1" stop-color="#D29B59"/>
+    </linearGradient>
+    <linearGradient id="copper" gradientUnits="userSpaceOnUse" x1="198" y1="101" x2="137" y2="181">
+      <stop stop-color="#FAC299"/>
+      <stop offset=".5" stop-color="#EA9670"/>
+      <stop offset="1" stop-color="#CA7753"/>
+    </linearGradient>
+    <linearGradient id="left-seed" gradientUnits="userSpaceOnUse" x1="108" y1="167" x2="124" y2="191">
+      <stop stop-color="#E1BD7A"/>
+      <stop offset="1" stop-color="#AF7D51"/>
+    </linearGradient>
+    <linearGradient id="right-seed" gradientUnits="userSpaceOnUse" x1="130" y1="167" x2="144" y2="189">
+      <stop stop-color="#E9A67D"/>
+      <stop offset="1" stop-color="#B16F51"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="13" y="16" width="230" height="229" rx="53" fill="#0D221C" opacity=".18"/>
+  <rect x="13" y="13" width="230" height="230" rx="53" fill="url(#forest)"/>
+  <rect x="14" y="14" width="228" height="228" rx="52" fill="none" stroke="#F0EDCD" stroke-opacity=".12"/>
+
+  <!-- A maple wing broadens and rounds at its free end. The nuts meet at the base. -->
+  <path d="M123 170C111 145 108 117 102 94C95 66 81 48 63 48C52 48 46 57 46 70C46 89 59 108 76 128C93 147 101 157 103 172C104 183 112 189 119 186C125 184 127 178 123 170Z" fill="url(#straw)"/>
+  <path d="M126 172C138 147 153 129 175 114C190 104 203 101 210 106C219 112 215 126 206 138C194 154 175 163 155 171C148 174 146 183 139 187C130 191 121 184 126 172Z" fill="url(#copper)"/>
+
+  <g id="fine-veins" fill="none" stroke-linecap="round">
+    <path d="M57 57C58 92 86 119 106 155M70 56C79 83 93 106 100 123M55 79C61 100 79 121 93 137"
+          stroke="#976F41" stroke-opacity=".36" stroke-width="1.4"/>
+    <path d="M59 57C64 86 86 110 98 127" stroke="#FFF3C9" stroke-opacity=".70" stroke-width="1.5"/>
+    <path d="M204 110C189 127 168 137 146 161M207 119C194 136 173 146 158 156"
+          stroke="#A55E4A" stroke-opacity=".38" stroke-width="1.4"/>
+    <path d="M199 111C183 121 166 131 154 143" stroke="#FFE7BE" stroke-opacity=".60" stroke-width="1.5"/>
+  </g>
+
+  <path d="M123 178C124 169 128 158 133 152Q135 150 136 152Q137 153 135 156C131 161 129 171 129 177Z" fill="#CFB17A"/>
+  <path d="M109 165C112 163 117 165 120 169C123 169 125 167 126 165C127 163 129 162 130 163C131 165 129 169 127 171C129 177 127 184 123 190C119 196 112 197 107 193C100 187 101 171 109 165Z" fill="url(#left-seed)"/>
+  <path d="M131 170C135 166 141 166 145 169C149 174 147 184 143 190C140 195 135 197 131 195C125 192 125 183 127 177C128 174 129 172 131 170Z" fill="url(#right-seed)"/>
+</svg>
