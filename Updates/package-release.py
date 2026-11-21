@@ -26,6 +26,8 @@ if args.archive_base_url:
         p.error("--archive-base-url must be an HTTPS directory URL")
 app = args.app.resolve()
 meta = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+feed_path = urlsplit(meta.get("SUFeedURL", "")).path
+feed_name = "appcast-intel.xml" if feed_path.endswith("/appcast-intel.xml") else "appcast.xml"
 build = meta["CFBundleVersion"]
 if not re.fullmatch("[0-9]+", build):
     p.error("expected an integer build number")
@@ -61,7 +63,7 @@ with tempfile.TemporaryDirectory(dir=args.channel) as tmp:
     for k, val in [("version", build), ("shortVersionString", meta["CFBundleShortVersionString"]), ("minimumSystemVersion", meta["LSMinimumSystemVersion"])]:
         ET.SubElement(item, "{" + ns + "}" + k).text = val
     item.append(enc)
-    feed = pathlib.Path(tmp) / "appcast.xml"
+    feed = pathlib.Path(tmp) / feed_name
     ET.ElementTree(rss).write(feed, encoding="utf-8", xml_declaration=True)
     subprocess.run([tool, "--ed-key-file", args.key, feed], check=True)
     with (args.channel / ".publish-lock").open("a") as lock:
@@ -74,4 +76,4 @@ with tempfile.TemporaryDirectory(dir=args.channel) as tmp:
         # Older feeds can still finish downloading their original archive.
         os.replace(zipfile, args.channel / archive_name)
         os.replace(feed, published)
-print(args.channel / "appcast.xml")
+print(args.channel / feed_name)

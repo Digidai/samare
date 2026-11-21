@@ -1,0 +1,57 @@
+name: Intel macOS
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/intel.yml"
+      - "build.sh"
+      - "Updates/**"
+      - "Bridge/**"
+      - "Native/**"
+      - "Resources/**"
+      - "Tests/architecture.py"
+      - "Tests/first-install.py"
+      - "Info.plist"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Published release tag to install and test, or leave empty to build from source"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: macos-15-intel
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Build an Intel disk image
+        if: ${{ !inputs.release_tag }}
+        run: |
+          SAMARE_BUILD_ARCH=x86_64 ./build.sh
+          ./Updates/package-dmg.sh build/Samare.app "$RUNNER_TEMP/Samare.dmg"
+      - name: Download the public Intel installer and verify its checksum
+        if: ${{ inputs.release_tag }}
+        env:
+          TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          name="Samare-${TAG#v}-x86_64.dmg"
+          base="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$TAG"
+          cd "$RUNNER_TEMP"
+          curl -fsSL --retry 3 "$base/$name" -o "$name"
+          curl -fsSL --retry 3 "$base/SHA256SUMS-intel" -o release-checksums
+          awk -v name="$name" '$2 == name { print; count++ } END { if (count != 1) exit 1 }' release-checksums > intel-checksum
+          shasum -a 256 -c intel-checksum
+          mv "$name" Samare.dmg
+      - name: Mount, launch and read Markdown on native Intel
+        run: |
+          python3 Tests/architecture.py "$RUNNER_TEMP/Samare.dmg" x86_64 --require-native
+          python3 Tests/first-install.py "$RUNNER_TEMP/Samare.dmg" --without-ui

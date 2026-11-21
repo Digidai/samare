@@ -13,7 +13,7 @@ channel = pathlib.Path(sys.argv[1])
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         name = urllib.parse.urlsplit(self.path).path[1:]
-        if name != "appcast.xml" and not re.fullmatch(r"Samare-[0-9]+(?:-[a-f0-9]{64})?\.zip", name):
+        if name not in {"appcast.xml", "appcast-intel.xml"} and not re.fullmatch(r"Samare-[0-9]+(?:-[a-f0-9]{64})?\.zip", name):
             self.send_error(404)
             return
         path = channel / name

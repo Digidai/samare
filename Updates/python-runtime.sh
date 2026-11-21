@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 base="$PWD/build/dependencies"
 release=20261110
 version=3.13.18
-case "$(uname -m)" in
+case "${SAMARE_BUILD_ARCH:-$(uname -m)}" in
     arm64) arch=aarch64; digest=7a2384641584ab9984221fcb0fc9265df465922af71be71410529e2a9c3f0540 ;;
     x86_64) arch=x86_64; digest=d27d59a722db9f69926eb6d9564071247221f45a04da920ea7f3001c97e32f9b ;;
     *) echo 'Unsupported Mac architecture.' >&2; exit 1 ;;
