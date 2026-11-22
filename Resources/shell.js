@@ -47,7 +47,7 @@
   let roots = [],
     workspace = '',
     creationFolder = '',
-    releaseVersion = '0.1.1',
+    releaseVersion = '0.1.2',
     pendingRelease = false,
     home = true,
     tabs = [],
@@ -2038,6 +2038,9 @@
         const close = button('Close', 'x', closeDialog, 'ico release-close');
         b.append(close, el('p', 'release-version', 'Version ' + releaseVersion), title);
         const notes = {
+          '0.1.2': [
+            ['Older WebKit versions', 'Open Markdown, enter emphasis and use inline math on older versions of Safari and the Mac web view.'],
+          ],
           '0.1.1': [
             ['Checking for updates', 'The menu now shows a result even when Samare is already checking in the background.'],
           ],
@@ -2442,9 +2445,10 @@
         const items = [...sheet.querySelectorAll("button:not(:disabled), input:not(:disabled), [tabindex='0']")]
           .filter(n => n.tabIndex >= 0 && n.getClientRects().length);
         const from = document.activeElement;
-        if (items.length && (e.shiftKey ? from === items[0] || from === sheet : from === items.at(-1))) {
+        const last = items[items.length - 1];
+        if (items.length && (e.shiftKey ? from === items[0] || from === sheet : from === last)) {
           e.preventDefault();
-          (e.shiftKey ? items.at(-1) : items[0]).focus();
+          (e.shiftKey ? last : items[0]).focus();
         }
         return;
       }
@@ -2480,7 +2484,7 @@
         return;
       } else if (!e.shiftKey && /^[1-9]$/.test(k)) {
         e.preventDefault();
-        const tab = k === '9' ? tabs.at(-1) : tabs[Number(k) - 1];
+        const tab = k === '9' ? tabs[tabs.length - 1] : tabs[Number(k) - 1];
         if (tab) activate(tab);
         return;
       } else if (e.shiftKey)

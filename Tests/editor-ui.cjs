@@ -36,6 +36,7 @@ async function main() {
     const page = await browser.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
+    await page.addInitScript(() => { delete Crypto.prototype.randomUUID; });
     await page.goto(pathToFileURL(fixture).href);
     const open = (name, text) =>
       page.evaluate(
@@ -417,6 +418,41 @@ async function main() {
         assert.equal(await value(), s);
       },
     );
+    await check('inline math preserves escaped dollars and rejects whitespace and price boundaries', async () => {
+      const examples = [
+        ['$x$', ['x']],
+        ['$x \\cdot y$', ['x \\cdot y']],
+        ['$x\\$y$', ['x\\$y']],
+        ['$ x$', []],
+        ['$x $', []],
+        ['$x\\ $', []],
+        ['$x$5', []],
+        ['$a\nb$', []],
+      ];
+      for (const [source, formulas] of examples) {
+        await open('Inline.md', source);
+        assert.deepEqual(await page.locator('.de-inline-math annotation').allTextContents(), formulas, source);
+        assert.equal(await value(), source);
+      }
+    });
+    await check('typing emphasis preserves its leading whitespace and the marks on that whitespace', async () => {
+      await open('Typed.md', '');
+      const edit = page.locator('.ProseMirror');
+      await edit.click();
+      await page.keyboard.type('*first* and word*literal* **strong**');
+      assert.deepEqual(await edit.locator('em').allTextContents(), ['first']);
+      assert.deepEqual(await edit.locator('strong').allTextContents(), ['strong']);
+      assert.equal((await edit.textContent()).replace(/\u00a0/g, ' '), 'first and word*literal* strong');
+      await open('Typed.md', '');
+      await edit.click();
+      await cmd('bold');
+      await page.keyboard.type('Lead *next');
+      assert.ok((await edit.locator('strong').textContent()).includes('Lead *next'));
+      await page.keyboard.type('*');
+      assert.equal((await edit.locator('strong').textContent()).replace(/\u00a0/g, ' '), 'Lead ');
+      assert.deepEqual(await edit.locator('em').allTextContents(), ['next']);
+      assert.equal((await edit.textContent()).replace(/\u00a0/g, ' '), 'Lead next');
+    });
     await check(
       'preview and source remain visible together for SVG, Mermaid and math',
       async () => {

@@ -22,6 +22,9 @@
     return b;
   };
   const lineIcon = name => window.samareGlyph(name, 'de-line-icon');
+  function randomSessionID() {
+    return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+  }
   function decode(s) {
     if (!s.includes('&')) return s;
     return s.replace(/&(?:#[0-9]+|#x[\da-f]+|[a-z][a-z0-9]+);/gi, (entity) => {
@@ -81,7 +84,8 @@
           return src.indexOf('$');
         },
         tokenizer(src) {
-          const m = /^\$(?![\s$])((?:\\.|[^$\n])+?)(?<!\s)\$(?!\d)/.exec(src);
+          // A space (even an escaped space) immediately before $ cannot end a formula.
+          const m = /^\$(?![\s$])((?:(?!\\?\s\$)(?:\\.|[^$\n]))+?)\$(?!\d)/.exec(src);
           if (m) return { type: 'inlinemath', raw: m[0], text: m[1] };
         },
       },
@@ -1997,7 +2001,7 @@
           codeWikiColors(source, tokens);
           const grammars = window.SamareScriptGrammar.languages;
           const id = language.toLowerCase();
-          const scriptGrammar = Object.hasOwn(grammars, id) && grammars[id];
+          const scriptGrammar = Object.prototype.hasOwnProperty.call(grammars, id) && grammars[id];
           if (scriptGrammar && typeof scriptGrammar === 'object') {
             scriptTokens(source, scriptGrammar, tokens);
           } else if (!/^(?:jsx|tsx)$/i.test(language) && L.hljs.getLanguage(language)) {
@@ -2061,14 +2065,16 @@
           ),
           ...[
             ['strong', /\*\*([^*\n]+)\*\*$/],
-            ['em', /(?:^|(?<=\s))\*([^*\n]+)\*$/],
+            ['em', /(?:^|\s)\*([^*\n]+)\*$/],
             ['code', /`([^`\n]+)`$/],
             ['strike', /~~([^~\n]+)~~$/],
           ].map(
             ([kind, re]) =>
               new L.InputRule(re, (state, match, start, end) => {
+                // Leave the preceding space in the document, including any marks it carries.
+                const prefix = kind === 'em' && /^\s/.test(match[0]) ? 1 : 0;
                 const tr = state.tr.replaceWith(
-                  start,
+                  start + prefix,
                   end,
                   schema.text(match[1], M[kind].create()),
                 );
@@ -2748,7 +2754,7 @@
         header: draft.header,
         value: draft.value,
       };
-      const key = recoveryPrefix + crypto.randomUUID();
+      const key = recoveryPrefix + randomSessionID();
       try {
         recoveryStore.setItem(key, JSON.stringify(record));
       } catch {
@@ -2822,6 +2828,7 @@
       const { field, column } = csvDraft;
       const row = csvDraft.row + (csvHeader ? 0 : 1);
       const old = gridRows(csvRows(text, delimiter));
+      const originalRow = old[row];
       const snapshot = {
         row,
         column,
@@ -2829,7 +2836,7 @@
         value: field.value,
         from: field.selectionStart,
         to: field.selectionEnd,
-        raw: text.slice(old[row][0].start, old[row].at(-1).end),
+        raw: text.slice(originalRow[0].start, originalRow[originalRow.length - 1].end),
         header: old[0].map((c) => c.value),
       };
       let next;
@@ -3550,7 +3557,7 @@
       }
       function remove(steps) {
         const n = target(steps),
-          last = steps.at(-1);
+          last = steps[steps.length - 1];
         if (steps.length === 1) {
           const a = text.lastIndexOf('\n', n.start - 1) + 1,
             next = text.indexOf('\n', n.end);
@@ -3605,7 +3612,7 @@
       function add(steps, forceKey) {
         const p = target(steps),
           object = p.type === 'object',
-          last = p.entries.at(-1),
+          last = p.entries[p.entries.length - 1],
           eol = text.includes('\r\n') ? '\r\n' : '\n';
         function append(raw) {
           const insert = last?.end ?? p.start + 1,
@@ -5006,5 +5013,5 @@
     }
     return { start, reveal, cancel };
   }
-  window.SamareEditor = { mount, createDocumentFind };
+  window.SamareEditor = { mount, createDocumentFind, randomSessionID };
 })();

@@ -24,6 +24,9 @@ macOS build without Node.js.
   history, list schema and tables, orderedmap, rope-sequence and w3c-keyname
   use the MIT license. Each package has its own copyright notice under
   Resources/vendor/licenses. https://prosemirror.net/
+• core-js supplies compatibility methods for older versions of JavaScriptCore.
+  Its MIT license is included in Resources/vendor/licenses/core-js.txt.
+  https://github.com/zloirock/core-js
 • Marked uses the MIT license and includes the upstream Markdown notice.
   marked-cjk-friendly and js-yaml use MIT. See marked.txt,
   marked-cjk-friendly.txt and js-yaml.txt in Resources/vendor/licenses.

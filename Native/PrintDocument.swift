@@ -58,13 +58,14 @@ enum PrintDocument {
         const measurements = rows.map(row => row.getBoundingClientRect().height);
         const headerHeight = header.getBoundingClientRect().height;
         const top = header.getBoundingClientRect().top - sheet.getBoundingClientRect().top;
-        const groups = [[]];
+        let group = [];
+        const groups = [group];
         let used = top + headerHeight + 2;
         rows.forEach((row, i) => {
-          if (groups.at(-1).length && used + measurements[i] > h) {
-            groups.push([]); used = headerHeight + 2;
+          if (group.length && used + measurements[i] > h) {
+            group = []; groups.push(group); used = headerHeight + 2;
           }
-          groups.at(-1).push(row); used += measurements[i];
+          group.push(row); used += measurements[i];
         });
         if (groups.length < 2) continue;
         const template = table.cloneNode(false);

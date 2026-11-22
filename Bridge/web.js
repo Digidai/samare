@@ -46,7 +46,7 @@ window.SamareBrowserReader = function ({
         );
       }
     } catch {}
-    entry ||= { group: crypto.randomUUID(), index: 0 };
+    entry ||= { group: window.SamareEditor.randomSessionID(), index: 0 };
     history.replaceState({ ...history.state, samareReader: entry }, '');
   }
   const highKey = 'samare-reader-history/' + entry.group;
@@ -515,7 +515,7 @@ window.SamareBrowserReader = function ({
   let displayPath = "", attention = null, noticeDismissed = false;
   const reader = window.SamareBrowserReader({getEditor:()=>editor, getHeadings:()=>headings, beforeNavigate});
   const changeReview = window.SamareRevisionReview({getEditor:()=>editor, commit:text=>{replaceText(text);changed();}});
-  const reviewSession = Array.from(crypto.getRandomValues(new Uint8Array(16)), n => n.toString(16).padStart(2,'0')).join('');
+  const reviewSession = window.SamareEditor.randomSessionID();
   let keepMarkers = false, staged = null, pendingStage = null;
   function diskText() { return changeReview.disk(editor.getText(),keepMarkers); }
   function prepareReview() {

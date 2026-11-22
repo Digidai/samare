@@ -1,6 +1,7 @@
 {
   "@fontsource-variable/geist": "5.2.8",
   "@fontsource-variable/geist-mono": "5.2.7",
+  "core-js": "3.51.0",
   "diff": "9.0.0",
   "esbuild": "0.28.2",
   "highlight.js": "10.7.3",

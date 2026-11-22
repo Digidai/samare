@@ -6,7 +6,7 @@ Samare is a local Markdown editor for macOS. Open a folder on your Mac, write in
 
 ## Install on macOS
 
-In **Apple menu → About This Mac**, look for the chip or processor. Choose **arm64.dmg** for an Apple M-series chip or **x86_64.dmg** for an Intel processor from [GitHub Releases](https://github.com/Digidai/samare/releases/latest). Open the disk image and drag Samare into Applications. Both 0.1.1 downloads use ad-hoc signing and have no Apple notarization. If Gatekeeper blocks the download, you can build Samare from source using the instructions below.
+In **Apple menu → About This Mac**, look for the chip or processor. Choose **arm64.dmg** for an Apple M-series chip or **x86_64.dmg** for an Intel processor from [GitHub Releases](https://github.com/Digidai/samare/releases/latest). Open the disk image and drag Samare into Applications. See the release notes for the signing and Apple notarization status of each download. If Gatekeeper blocks the download, you can build Samare from source using the instructions below.
 
 Each release build checks a separate signed update feed for its processor. The Apple Silicon release lists its checksums in `SHA256SUMS` and the Intel release in `SHA256SUMS-intel`. Builds you make yourself only check a feed when you configure one.
 
@@ -90,6 +90,35 @@ The tool signs the nested components, submits the app and disk image to Apple, s
 在 Samare 中打开 Mac 上的文件夹，选中一份 Markdown，然后按 ⌘L。把复制的链接交给同一台 Mac 上的 Agent，它在浏览器中所作的修改会写回这份文件。CSV、TSV、JSON 和 JSONL 也可以在这个工作区里查看和编辑。
 
 首次使用 Agent 时，在 **Settings → Use in Agent** 启用本地命令和需要的客户端。仓库提供桌面端、浏览器编辑器、Bridge、Quick Look 扩展、构建脚本和签名更新工具的源码。
+
+### 在发布用的 Mac 上配置 Apple 公证
+
+1. 登录 Apple Developer 账户，在 **Membership details（会员资格详情）** 确认 Apple Developer Program 会员有效，记下十位 **Team ID**。本地 Developer ID 证书由 **Account Holder（账户持有人）** 创建。[Apple 证书说明](https://developer.apple.com/help/account/certificates/create-developer-id-certificates/) · [查找 Team ID](https://developer.apple.com/help/glossary/team-id/)
+
+2. 打开 **Xcode → Settings → Apple Accounts**，登录并选中上一步的团队。进入 **Manage Certificates → ＋ → Developer ID Application**。如果团队已有证书及私钥的加密 `.p12` 备份，可在这台 Mac 的「钥匙串访问」中导入到「登录」钥匙串。若由同事担任 Account Holder，可在本机「钥匙串访问 → 证书助理 → 从证书颁发机构请求证书」创建 CSR，让对方签发 **Developer ID Application** 证书，再在本机双击返回的 `.cer`。私钥留在生成 CSR 的 Mac 上。[Apple 的 CSR 操作说明](https://developer.apple.com/help/account/certificates/create-a-certificate-signing-request/)
+
+3. 在终端运行下面的命令。输出中应出现一条有效的 `Developer ID Application: 名称 (TEAMID)`。在「钥匙串访问 → 登录 → 我的证书」展开该条目，也应能看到配对的私钥。
+
+   ```sh
+   security find-identity -v -p codesigning
+   ```
+
+4. 在 Apple 账户的 **登录与安全 → App 专用密码** 创建一个密码，可命名为 `Samare Notary`。账户需启用双重认证。在终端运行下面的命令，把引号中的两个示例值换成自己的邮箱及 Team ID。等终端提示时再粘贴 App 专用密码并回车，输入不会回显。密码只交给本机钥匙串。[Apple 的 App 专用密码说明](https://support.apple.com/en-us/102654) · [notarytool 的交互式验证](https://developer.apple.com/documentation/technotes/tn3147-migrating-to-the-latest-notarization-tool)
+
+   ```sh
+   xcrun notarytool store-credentials samare-notary \
+     --apple-id '你的 Apple 账户邮箱' \
+     --team-id '你的十位 Team ID'
+   ```
+
+5. 验证 Apple 服务能读取这组凭据。看到下面的中文成功提示即完成账户配置。与协作者交接时只需提供 profile 名称 `samare-notary`；私钥、密码、`.p12` 和 `.p8` 都留在受控环境。
+
+   ```sh
+   xcrun notarytool history --keychain-profile samare-notary --output-format json >/dev/null \
+     && echo '公证账户验证成功'
+   ```
+
+6. 发布时先核对候选应用的版本、处理器架构和更新地址，然后按上文的 **Apple notarization for maintainers** 分别处理 Apple Silicon 和 Intel。只有当 Apple 返回 `Accepted`、应用与 DMG 的 `stapler validate` 和 Gatekeeper 检查均通过后，才将该下载件标记为已公证。[Apple 公证流程](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution)
 
 ## License
 

@@ -1,6 +1,6 @@
 {
   "name": "samare",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Build tools for Samare’s offline document renderer",
   "scripts": {
@@ -11,6 +11,7 @@
   "devDependencies": {
     "@fontsource-variable/geist": "5.2.8",
     "@fontsource-variable/geist-mono": "5.2.7",
+    "core-js": "3.51.0",
     "diff": "9.0.0",
     "esbuild": "0.28.2",
     "highlight.js": "10.7.3",

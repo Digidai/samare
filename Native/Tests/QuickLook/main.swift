@@ -1,4 +1,23 @@
 import Foundation
+import JavaScriptCore
+
+// Exercise the same standalone JSContext as Quick Look with the Monterey-era API surface.
+let legacy = JSContext()!
+legacy.evaluateScript("delete Array.prototype.at; delete String.prototype.at; delete Object.hasOwn; delete globalThis.structuredClone")
+let libraries = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
+legacy.evaluateScript(libraries)
+precondition(legacy.exception == nil, legacy.exception?.toString() ?? "Could not load the editor libraries")
+let compatible = legacy.evaluateScript("""
+  (() => {
+    const original = new Map([['row', ['one', 'two']]]);
+    const copy = structuredClone(original);
+    copy.get('row')[0] = 'new';
+    return original.get('row')[0] === 'one' && copy.get('row').at(-1) === 'two'
+      && 'Samare'.at(-1) === 'e' && Object.hasOwn({note: 1}, 'note')
+      && SamareEditorLibs.marked.parse('[doc][link]\\n\\n[link]: example.md').includes('href="example.md"');
+  })()
+  """)
+precondition(legacy.exception == nil && compatible?.toBool() == true, "Monterey editor library compatibility")
 
 let fixture = FileManager.default.temporaryDirectory.appendingPathComponent(
   "samare-ql-" + UUID().uuidString + ".md")

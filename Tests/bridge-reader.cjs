@@ -13,6 +13,7 @@ async function main() {
       viewport: { width: 1280, height: 860 },
     });
     page.setDefaultTimeout(7000);
+    await page.addInitScript(() => { delete Crypto.prototype.randomUUID; });
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     const alpha = files['Alpha.md'],
