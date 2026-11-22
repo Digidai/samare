@@ -19,6 +19,13 @@ let compatible = legacy.evaluateScript("""
   """)
 precondition(legacy.exception == nil && compatible?.toBool() == true, "Monterey editor library compatibility")
 
+// This program lives in the native extension, outside the JavaScript vendor build.
+// A literal lookbehind anywhere in it prevents even a plain heading from rendering on Monterey.
+for assertion in ["(?<=", "(?<!"] {
+  precondition(!PreviewRenderer.markdownScript.contains(assertion),
+               "Quick Look's embedded program requires a JavaScript RegExp lookbehind")
+}
+
 let fixture = FileManager.default.temporaryDirectory.appendingPathComponent(
   "samare-ql-" + UUID().uuidString + ".md")
 try Data(
@@ -78,6 +85,18 @@ func writeAndRender(_ text: String) throws -> String {
 }
 let price = try writeAndRender("从**$19mn**到**$172mn**。此外 $x+y$。")
 precondition(price.contains("<strong>$19mn</strong>") && price.contains("<strong>$172mn</strong>") && price.contains("katex-mathml"))
+let delimiters = try writeAndRender(#"""
+  Single $x$ and escaped dollar $a\$b$.
+
+  Trailing space $x $.
+
+  Escaped trailing space $x\ $.
+
+  Dollar followed by a digit $x$2.
+  """#)
+precondition(delimiters.components(separatedBy: #"<span class="inlinemath">"#).count == 3)
+precondition(delimiters.contains(#"<annotation encoding="application/x-tex">a\$b</annotation>"#))
+precondition(delimiters.contains("$x $.") && delimiters.contains(#"$x\ $."#) && delimiters.contains("$x$2."))
 let diagrams = try writeAndRender("# Figures\n\n" + diagram(flow) + diagram(pie) + diagram("invalid source"))
 precondition(diagrams.contains("class=\"pele pele-flowchart\"") && diagrams.contains("class=\"pele pele-pie\"")
   && diagrams.contains("class=\"pele-slices\"") && diagrams.contains("Item two")

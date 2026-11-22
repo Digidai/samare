@@ -21,7 +21,7 @@ class SamareHost: NSObject, NSApplicationDelegate, WKScriptMessageHandler, WKNav
   var isReady = false
   var pendingRelease = false
   var releaseBuild: Int { Int(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "") ?? 0 }
-  var releaseVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.2" }
+  var releaseVersion: String { Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.3" }
   #if canImport(Sparkle)
   let updates = SamareUpdates()
   #endif

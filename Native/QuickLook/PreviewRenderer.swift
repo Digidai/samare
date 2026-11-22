@@ -114,7 +114,24 @@ enum PreviewRenderer {
     }
     js.setObject(imageData, forKeyedSubscript: "imageData" as NSString)
     js.setObject(text, forKeyedSubscript: "sourceText" as NSString)
-    let value = js.evaluateScript(
+    let value = js.evaluateScript(markdownScript)
+    guard js.exception == nil, let body = value?.toString(), !body.isEmpty || text.isEmpty else {
+      throw NSError(
+        domain: "Preview", code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Unable to render Markdown preview."])
+    }
+    var fonts = [String: Data]()
+    let sheets = try fontStyles(for: library, fonts: &fonts)
+    let html = """
+      <!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark">
+      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src cid:; img-src data:">
+      <style>\(sheets)\n\(layout)\n\(diagramStyles)</style></head><body><article>\(body)</article></body></html>
+      """
+    attachFonts(fonts)
+    return Data(html.utf8)
+  }
+
+  static let markdownScript =
       #"""
       (() => {
         const escape = s => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -161,7 +178,10 @@ enum PreviewRenderer {
             if (match) return {type:'wikilink',raw:match[0],text:match[2] || match[1]};
           }, renderer: token => '<span class="wikilink">'+escape(token.text)+'</span>'},
           {name:'displaymath',level:'block',start:s=>s.indexOf('$$'),tokenizer(s){const m=/^\$\$[ \t]*\n([\s\S]+?)\n\$\$[ \t]*(?=\n|$)/.exec(s); if(m)return {type:'displaymath',raw:m[0],text:m[1]}},renderer:t=>'<div class="displaymath">'+math(t,true)+'</div>'},
-          {name:'inlinemath',level:'inline',start:s=>s.indexOf('$'),tokenizer(s){const m=/^\$(?![\s$])((?:\\.|[^$\n])+?)(?<!\s)\$(?!\d)/.exec(s); if(m)return {type:'inlinemath',raw:m[0],text:m[1]}},renderer:t=>'<span class="inlinemath">'+math(t,false)+'</span>'}
+          {name:'inlinemath',level:'inline',start:s=>s.indexOf('$'),tokenizer(src) {
+            const m = /^\$(?![\s$])((?:(?!\\?\s\$)(?:\\.|[^$\n]))+?)\$(?!\d)/.exec(src);
+            if (m) return {type:'inlinemath',raw:m[0],text:m[1]};
+          },renderer:t=>'<span class="inlinemath">'+math(t,false)+'</span>'}
         ]});
         const renderer = new marked.Renderer();
         renderer.listitem = function(token) {
@@ -212,22 +232,7 @@ enum PreviewRenderer {
         if (!title) return parts.properties + content;
         return title[0] + parts.properties + content.slice(title[0].length);
       })()
-      """#)
-    guard js.exception == nil, let body = value?.toString(), !body.isEmpty || text.isEmpty else {
-      throw NSError(
-        domain: "Preview", code: 2,
-        userInfo: [NSLocalizedDescriptionKey: "Unable to render Markdown preview."])
-    }
-    var fonts = [String: Data]()
-    let sheets = try fontStyles(for: library, fonts: &fonts)
-    let html = """
-      <!doctype html><html><head><meta charset="utf-8"><meta name="color-scheme" content="light dark">
-      <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src cid:; img-src data:">
-      <style>\(sheets)\n\(layout)\n\(diagramStyles)</style></head><body><article>\(body)</article></body></html>
-      """
-    attachFonts(fonts)
-    return Data(html.utf8)
-  }
+      """#
 
   private static let layout = """
     :root {

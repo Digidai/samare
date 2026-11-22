@@ -47,7 +47,7 @@
   let roots = [],
     workspace = '',
     creationFolder = '',
-    releaseVersion = '0.1.2',
+    releaseVersion = '0.1.3',
     pendingRelease = false,
     home = true,
     tabs = [],
@@ -2038,6 +2038,9 @@
         const close = button('Close', 'x', closeDialog, 'ico release-close');
         b.append(close, el('p', 'release-version', 'Version ' + releaseVersion), title);
         const notes = {
+          '0.1.3': [
+            ['Quick Look on Monterey', 'Markdown previews now render with the JavaScript engine included in macOS Monterey.'],
+          ],
           '0.1.2': [
             ['Older WebKit versions', 'Open Markdown, enter emphasis and use inline math on older versions of Safari and the Mac web view.'],
           ],
