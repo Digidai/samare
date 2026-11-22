@@ -2,20 +2,40 @@ name: Public macOS upgrade
 
 on:
   workflow_dispatch:
+    inputs:
+      architecture:
+        description: Native Mac architecture
+        type: choice
+        options:
+          - arm64
+          - x86_64
+        default: arm64
+      from_version:
+        description: Starting release (defaults to 0.1.0 on Apple Silicon or 0.1.1 on Intel)
+        type: string
+        required: false
+      to_version:
+        description: Expected public update target (latest or a specific version)
+        type: string
+        default: latest
 
 permissions:
   contents: read
 
 jobs:
   real-update:
-    runs-on: macos-15
+    runs-on: ${{ inputs.architecture == 'x86_64' && 'macos-15-intel' || 'macos-15' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-      - name: Click Update in the public arm64 application and observe its relaunch
-        run: python3 -u Tests/public-upgrade.py
+      - name: Click Update in the public application and observe its relaunch
+        env:
+          ARCHITECTURE: ${{ inputs.architecture }}
+          FROM_VERSION: ${{ inputs.from_version }}
+          TO_VERSION: ${{ inputs.to_version }}
+        run: python3 -u Tests/public-upgrade.py --architecture "$ARCHITECTURE" --from-version "$FROM_VERSION" --to-version "$TO_VERSION"
       - name: Preserve process, accessibility and document evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
